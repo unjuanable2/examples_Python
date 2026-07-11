@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+*.pyc
+exp1/__pycache__/
+exp1/models/__pycache__/
+exp1/data/cifar-10-batches-py/
