@@ -8,3 +8,8 @@ exp1/data/cifar-10-batches-py/
 # Model checkpoints / trained weights
 exp1/weights/
 *.pt
+
+# Local/private training documents
+实习生沟通技巧详解.pdf
+岗前培训课程-计算机汇总.xlsx
+中国科学院计算技术研究所所级vpn使用管理办法 3.pdf
