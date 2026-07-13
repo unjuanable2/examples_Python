@@ -1,6 +1,5 @@
 - [训练模型的整体过程](#训练模型的整体过程)
   - [其它文件/文件夹在实验里的作用](#其它文件文件夹在实验里的作用)
-- [训练结果](#训练结果)
 - [Questions](#questions)
 
 
@@ -21,17 +20,18 @@
   # `--fp16`、`--loss_scaling`：可选的半精度训练相关参数。
   ```
 - 解析完命令行参数后，`main.py` 传参数(model name)，通过 `models/model_factory_dict.py` 创建模型。
-  - `models/` 文件夹里保存了多种网络结构定义，e.g. `resnet.py`、`alexnet.py`、`vgg.py`、`mobilenet.py` 等；
+  - `models/` 文件夹里保存了多种网络结构定义，e.g. `resnet.py`、 `alexnet.py`、 `vgg.py`、 `mobilenet.py` 等；
     - `models/__init__.py` 把 `model_factory` 暴露出来；
     - `models/model_factory_dict.py` 维护“模型名称字符串 -> 模型构造函数”的映射；
   - 当命令行参数是 `--model resnet18` 时，实际会调用 `models/resnet.py` 里的 `ResNet18()`: 构造的是 `ResNet(BasicBlock, [2, 2, 2, 2])`，最后的全连接层输出 10 个值，对应 CIFAR-10 的 10 个类别。  
 - `main.py` 把创建出的模型（模型名称、模型对象、模型学习率、学习率、是否使用 GPU、是否使用 FP16、是否使用 loss scaling）交给 `train.py` 里的 `Trainer` 类，得到 `Trainer` 类训练器对象 `trainer`。
   - `Trainer.__init__()` 保存模型、学习率、是否使用 GPU/FP16 等配置；
-    - 如果启用 GPU，会执行 `model.cuda()`；
+    - 初始化 对象属性 为 用户传进来的参数
+    - 如果启用 GPU，会执行 `model.cuda()` 把模型移动到 GPU 显存上
     - 优化器使用 `optim.SGD(model.parameters(), lr, momentum=0.9, weight_decay=5e-4)`；
       - `momentum=0.9` 可以让参数更新带有“惯性”，通常收敛更稳；
       - `weight_decay=5e-4` 是 L2 正则化，用来抑制权重过大，减少过拟合；
-    - 学习率调度器是 `MultiStepLR`，在 `[10, 20, 50, 100, 180]` 这些 epoch 后把学习率乘以 `0.1`。
+    - 学习率调度器是 `MultiStepLR`，到 `[10, 20, 50, 100, 180]` 这些 epoch 时把学习率乘以 0.1
 - `main.py` 导入 `data.py` 中的两个数据加载器对象 `trainloader`、`testloader`，完成数据准备。`data.py` 具体涉及：
   - 定义训练集和测试集的预处理流程：
     - 训练集使用 `train_transforms` (一种训练预处理流程)：
@@ -50,23 +50,31 @@
     - `batch_size=128` 表示每次训练读 128 张图；
     - `shuffle=True` 表示每个 epoch 打乱样本顺序，避免模型总是按固定顺序见到数据；
     - `num_workers=4` 表示用 4 个子进程并行读取数据，加快喂数据速度。
-- `main.py` 最后一行 `trainer.train_and_evaluate(trainloader, testloader, args.steps)` 开始训练和评估循环。
-  - 外层循环跑 `steps` 次，也就是 epoch 数；
----
-
-
-  - 每个 epoch 先调用 `train()` 在训练集上更新参数；
-    - `self.model.train()`：切换到训练模式，启用 BatchNorm/Dropout 的训练行为；
-    - 前 5 个 epoch 使用 warmup，让学习率从较小值逐步升到设定的初始学习率，避免一开始步子太大导致训练不稳定；
-    - 损失函数是 `nn.CrossEntropyLoss()`。分类任务通常不用 `MSELoss()`，因为模型输出的是每一类的 logits，交叉熵更适合“10 类里选 1 类”的监督学习；
-    - 每个 batch 的训练顺序是：
+- `main.py` 最后一行 `trainer.train_and_evaluate(trainloader, testloader, args.steps)` 开始训练和评估循环。外层循环跑 `steps` 次，也就是 epoch 数。每个 epoch:
+  - 先调用 `train()` 在训练集上更新参数
+    - `self.model.train()` 切换到训练模式，e.g. 启用 BatchNorm/Dropout 的训练行为
+    - 设置 `train_loss` (累计训练 loss), `correct` (累计预测正确的样本数), `total` (累计已经处理过的样本数) 为 0
+    - 设置当前 epoch 的学习率：
+      - 前 5 个 epoch (从0开始计数) 使用 warmup，让学习率从较小值逐步升到设定的初始学习率，避免一开始步子太大导致训练不稳定；
+      - 第 5 个 epoch：恢复到初始学习率；
+      - 第 5 个 epoch 之后：每个 epoch 末尾调用 `self.scheduler.step();` :当 scheduler 走到 milestones=[10, 20, 50, 100, 180] 时，学习率会乘以 gamma=0.1
+    - 定义损失函数 `nn.CrossEntropyLoss()`。
+      - 分类任务通常不用 `MSELoss()`，因为模型输出的是每一类的 logits，交叉熵更适合“10 类里选 1 类”的监督学习；
+    - 遍历训练集的每一个 batch，每个 batch 的训练顺序是：
       - 从 `trainloader` 取出 `inputs` 和 `targets`；
         - 如果使用 GPU，把数据移到 CUDA；
+        - 清空上一轮 batch 留下的梯度
       - `outputs = model(inputs)` 前向传播，得到 10 类 logits；
-      - 根据预测结果 vs 训练标签，用 `loss = criterion(outputs, targets)` 计算分类损失；
-      - `loss.backward()` 反向传播计算梯度；
+      - `loss = criterion(outputs, targets)` 根据模型预测结果 outputs vs 真实训练标签 targets，计算分类损失；
+      - `loss.backward()` 反向传播，根据 loss 计算模型每个参数的梯度
       - `optimizer.step()` 根据梯度更新模型参数；
-      - 统计训练 loss 和 accuracy，并用 `utils.py` 的 `progress_bar()` 打印进度条。
+      - 统计训练 loss `train_loss` 和 accuracy ( 根据 `total`, `correct`) ，并用 `utils.py` 的 `progress_bar()` 打印进度条。
+        - 关于 `utils.py`：详情见注释
+          - `progress_bar()`: 这个函数用到了 `format_time(seconds)`
+          - `format_time(seconds)`: 耗时格式化
+
+---
+
   - 再调用 `evaluate()` 在测试集上计算准确率；
     - `self.model.eval()` 切换到评估模式；
     - `with torch.no_grad()` 关闭梯度记录，节省显存和计算；
@@ -84,23 +92,13 @@
 
 
 ## 其它文件/文件夹在实验里的作用
- 
-- `utils.py`：提供终端训练进度条和耗时格式化
 - `train_linear.py`：一个更简单的线性回归入门例子，用来理解“准备数据 -> 定义模型 -> 定义 loss -> 定义 optimizer -> forward/backward/update”的基本套路
 - `dataset.py`：为推理/量化脚本准备数据，其中 `QDataset` 从 `data/q/*.jpg` 读取图片，文件名里的数字作为标签；
 - `data/q/`：一组额外图片，主要给 `QDataset` 和后续量化校准/测试使用；
 - `int8_infer.py`：加载 `weights/<model>.pt`，用 `torch2trt` 尝试转换 TensorRT INT8/FP16 推理，并在 `test.jpg` 上比较普通 PyTorch 模型和 TensorRT 模型的推理时间、预测类别；
 - `test.jpg`：`int8_infer.py` 的单张测试图片；
 - `/__pycache__/`：Python 自动生成的字节码缓存，可以不用关心。
-
-
-
-# 训练结果
-
  
-
-要求：
-
 
 
 # Questions

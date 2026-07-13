@@ -329,27 +329,77 @@ class Trainer(object):
             for param_group in self.optimizer.param_groups:
                 # optimizer.param_groups 是优化器管理的一组参数配置。
                 # 简单理解：这里是在遍历优化器里所有需要设置学习率的参数组。
+                #
+                # PyTorch 的优化器可以同时管理多组参数。
+                # 每一组参数都可以有自己的学习率、动量、权重衰减等配置。
+                #
+                # 当前代码创建优化器时写的是：
+                #   optim.SGD(self.model.parameters(), self.lr, momentum=0.9, weight_decay=5e-4)
+                #   或者 FP16 模式下：
+                #   optim.SGD(self.master_params, self.lr, momentum=0.9, weight_decay=5e-4)
+                # 这种写法通常只有一组参数，所以这个 for 循环通常只执行一次。
+                #
+                # 但 PyTorch 也允许这样分组：
+                # optimizer = optim.SGD([
+                #     {'params': model.layer1.parameters(), 'lr': 0.01},
+                #     {'params': model.layer2.parameters(), 'lr': 0.001},
+                # ])
+                # 这样 layer1 和 layer2 就可以用不同学习率训练。
+                #
+                # 所以这里写 for 循环，是为了兼容“优化器里可能有多组参数”的情况。
+                # 当前只有一组时，它就只改这一组的 lr；
+                # 以后如果有多组，它会把每一组的 lr 都改掉。
 
-                param_group['lr'] = lr
-                # 把当前参数组的学习率改成 warmup 算出来的 lr。
+                param_group['lr'] = lr # 把当前参数组的学习率改成 warmup 算出来的 lr。
         elif epoch == 5:
             # 第 5 个 epoch 时，把学习率恢复为初始设定的 self.lr。
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = self.lr
 
         # 另一种学习率调度写法，当前代码没有启用。
-        # scheduler = MultiStepLR(
-        #     self.optimizer, milestones=[80, 120, 160, 180], gamma=0.1)
+        # scheduler = MultiStepLR(self.optimizer, milestones=[80, 120, 160, 180], gamma=0.1)
         # if epoch >= 5:
         #     scheduler.step(epoch=epoch)
+        #
+        # 注意：这里说“当前代码没有启用”，指的是上面这三行被注释掉的备用写法没有启用。
+        # 不是说 Trainer.__init__() 里创建的 self.scheduler 没有用。
+        #
+        # 当前真正生效的学习率逻辑是：
+        # 1. 在 Trainer.__init__() 里创建 self.scheduler：
+        #    MultiStepLR(self.optimizer, milestones=[10, 20, 50, 100, 180], gamma=0.1)
+        # 2. 在 train() 开头，如果 epoch < 5：
+        #    使用 warmup_learning_rate(...) 手动设置较小的学习率。
+        #    这叫学习率预热，目的是让训练刚开始时不要更新得太猛。
+        # 3. 如果 epoch == 5：手动把学习率恢复成初始学习率 self.lr
+        # 4. 在这个 train() 函数的最后：
+        #    if epoch >= 5:
+        #        self.scheduler.step()
+        #    这里才是真正调用 __init__() 里那个 self.scheduler。
+        #
+        # 所以整体关系是：
+        # - 前 5 个 epoch：不用 MultiStepLR，先手动 warmup；
+        # - 第 5 个 epoch：恢复到初始学习率；
+        # - 第 5 个 epoch 之后：每个 epoch 末尾调用 self.scheduler.step()；
+        #   - 当 scheduler 走到 milestones=[10, 20, 50, 100, 180] 时，学习率会乘以 gamma=0.1。
+        #
+        # 这里还有一个容易混淆的点：
+        # 被注释掉的备用写法 milestones 是 [80, 120, 160, 180]；
+        # 当前实际使用的 self.scheduler milestones 是 [10, 20, 50, 100, 180]。
 
-        print('Learning Rate: %g' % (list(
-            map(lambda group: group['lr'], self.optimizer.param_groups)))[0])
+        print('Learning Rate: %g' % (list(map(lambda group: group['lr'], self.optimizer.param_groups)))[0])
         # 打印当前学习率。
         #
-        # 这里语法比较绕，可以先理解为：
-        # - 从 optimizer.param_groups 里取出当前学习率
-        # - 用 print 打印出来
+        # (语法)
+        # map(lambda group: group['lr'], self.optimizer.param_groups)：
+        # - map(...) 会把后面每个参数 group 传给前面的 lambda 函数；
+        # - lambda group: group['lr'] 是一个匿名函数，
+        #   输入是参数组 group
+        #   输出是这个参数组的学习率 group['lr']
+        # - 结果是一个 map 对象，里面保存了每个参数组的学习率。
+        #
+        # (语法)
+        # list(...) 把 map 对象转换成列表。
+        # - [0] 取出列表里的第一个元素，也就是当前训练使用的学习率。
 
         ############################ 定义损失函数 ######################################
         # 损失函数使用 FP32 计算。
@@ -358,11 +408,7 @@ class Trainer(object):
         #
         # CrossEntropyLoss 用于多分类任务。
         # 在这个实验里，模型输出 10 个类别的 logits，
-        # targets 是真实类别编号，例如 0~9。
-        #
-        # loss 的含义：
-        # - 如果模型给真实类别的分数高，loss 小；
-        # - 如果模型给错误类别的分数高，loss 大。
+        # targets 代表真实类别编号，例如 0~9。
 
         ############################ 遍历训练集的每一个 batch ##########################
         for idx, (inputs, targets) in enumerate(trainloader):
@@ -389,17 +435,14 @@ class Trainer(object):
             # 如果不清零，当前 batch 的梯度会和上一个 batch 的梯度混在一起。
 
             outputs = self.model(inputs)
-            # 前向传播 forward。
-            # 把图片 inputs 输入模型，得到 outputs。
-            #
-            # outputs 不是最终的类别名字，而是每个类别的分数 logits。
-            # 例如一张图片可能输出 10 个数，分别对应 10 个 CIFAR-10 类别。
+            # 前向传播 forward: 把图片 inputs 输入模型，得到 outputs。
+            # - outputs 不是最终的类别名字，而是每个类别的分数 logits。
+            #   e.g. 一张图片可能输出 10 个数，分别对应 10 个 CIFAR-10 类别。
 
             # 损失值使用 FP32 计算，因为归约类操作用 FP16 表示时可能不准确。
             loss = criterion(outputs, targets)
             # 用模型预测 outputs 和真实标签 targets 计算 loss。
             # 注意：这里是“训练集预测结果 vs 训练集真实标签”，不是和测试集比较。
-
             if self.loss_scaling:
                 # 有时 loss 会小到难以用 FP16 表示，
                 # 所以这里用一个较大的 2 的幂对 loss 做缩放，当前使用 2**7。
@@ -408,21 +451,15 @@ class Trainer(object):
                 # 这样 loss.backward() 得到的梯度也会被临时放大，
                 # 减少 FP16 反向传播时梯度太小变成 0 的风险。
 
-            # 计算梯度。
+            # 反向传播 backward，根据 loss 计算模型每个参数的梯度。
             loss.backward()
-            # 反向传播 backward。
-            # 根据 loss 计算模型每个参数的梯度。
-            #
             # 梯度可以理解成：
             # 为了让 loss 变小，每个参数应该往哪个方向、改多少。
 
-            if self.fp16_mode:
-                # FP16 模式下，模型参数负责计算，FP32 主参数负责更新。
+            if self.fp16_mode: # FP16 模式下，模型参数负责计算，FP32 主参数负责更新.
 
-                # 把刚算出的梯度移动到 FP32 主参数上，
-                # 这样后续可以用 FP32 执行梯度更新。
-                self.model_grads_to_master_grads(self.model_params,
-                                                 self.master_params)
+                # 把刚算出的梯度移动到 FP32 主参数上，这样后续可以用 FP32 执行梯度更新。
+                self.model_grads_to_master_grads(self.model_params, self.master_params)
                 # 这一步之后，FP32 的 self.master_params 上有了梯度。
 
                 if self.loss_scaling:
@@ -430,8 +467,6 @@ class Trainer(object):
                     # 因为此时梯度已经在 FP32 主参数上。
                     for params in self.master_params:
                         params.grad.data = params.grad.data / self._LOSS_SCALE
-                        # 前面 loss 乘了 128，所以梯度也被放大了 128。
-                        # 真正更新参数前，要把梯度除以 128，恢复真实大小。
 
                 # 用 FP32 执行权重更新。
                 self.optimizer.step()
@@ -439,8 +474,7 @@ class Trainer(object):
                 # 在 FP16 模式下，它修改的是 FP32 master_params。
 
                 # 把更新后的权重复制回 FP16 模型权重。
-                self.master_params_to_model_params(self.model_params,
-                                                   self.master_params)
+                self.master_params_to_model_params(self.model_params, self.master_params)
                 # 这样下一次 forward 时，FP16 模型用的就是更新后的参数。
             else:
                 self.optimizer.step()
@@ -453,9 +487,7 @@ class Trainer(object):
 
             _, predicted = outputs.max(1)
             # outputs.max(1) 会在“类别维度”上找最大值。
-            # 返回两个东西：
-            # - 最大分数
-            # - 最大分数对应的类别编号
+            # 返回：最大分数, 最大分数对应的类别编号
             #
             # 这里用 _ 接住最大分数，表示后面不用它；
             # predicted 保存预测出来的类别编号。
@@ -466,23 +498,19 @@ class Trainer(object):
 
             correct += (targets == predicted).sum().item()
             # targets == predicted 会得到一组 True/False：
-            # - True 表示这张图预测对了
-            # - False 表示预测错了
+            # True 表示这张图预测对了, False 表示预测错了
             #
             # sum() 会把 True 当作 1、False 当作 0 来求和，
             # 得到当前 batch 预测正确的数量。
 
-            progress_bar(
-                idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)' %
-                (train_loss / (idx + 1), 100. * correct / total, correct,
-                 total))
+            progress_bar( idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)' %
+                (train_loss / (idx + 1), 100. * correct / total, correct, total))
             # 打印训练进度条。
             # 显示当前平均 loss、训练准确率、正确数量/总数量。
 
         if epoch >= 5: # 2020.09.09 修改：第 5 个 epoch 之后再更新调度器。
             self.scheduler.step()
-            # 更新学习率调度器。
-            # 到 milestones 指定的 epoch 时，学习率会乘以 gamma。
+            # 更新学习率调度器：到 milestones 指定的 epoch 时，学习率会乘以 gamma。
 
     def evaluate(self, epoch, testloader):
         # evaluate(...) 是 Trainer 类里的一个方法，用来在测试集上评估模型。
