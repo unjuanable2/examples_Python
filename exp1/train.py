@@ -232,7 +232,6 @@ class Trainer(object):
         把 FP32 主参数复制回 FP16 模型参数。
         """
         # 这个函数只在 FP16 训练模式下使用。
-        #
         # 参数含义：
         # - model_params：模型里实际用于 forward/backward 的 FP16 参数列表
         # - master_params：优化器实际更新的 FP32 主参数列表
@@ -249,19 +248,15 @@ class Trainer(object):
             # 例如：
             # model_params = [m1, m2, m3]
             # master_params = [p1, p2, p3]
-            # zip(...) 之后每次循环得到：
-            # (m1, p1), (m2, p2), (m3, p3)
+            # zip(...) 之后每次循环得到：(m1, p1), (m2, p2), (m3, p3)
             #
             # 这里的 model 和 master 不是“模型对象”和“主模型”，
             # 而是两套参数列表中位置对应的两个参数张量。
 
             model.data.copy_(master.data)
-            # copy_(...) 是原地复制。
+            # copy_(...) 是原地复制，把更新后的 FP32 主参数数值复制到对应的 FP16 模型参数里
             # master.data 是 FP32 主参数的数值；
             # model.data 是 FP16 模型参数的数值。
-            #
-            # 这句的意思是：
-            # 把更新后的 FP32 主参数数值复制到对应的 FP16 模型参数里。
             #
             # 下划线结尾的 copy_ 是 PyTorch 命名习惯：
             # 表示这个操作会直接修改调用它的对象本身。
@@ -273,8 +268,8 @@ class Trainer(object):
         # 把 FP16 模型参数上的梯度，复制到 FP32 主参数上。
         #
         # 为什么要复制梯度？
-        # - forward/backward 是用 FP16 模型参数算的；
-        # - 所以 loss.backward() 后，梯度先出现在 model_params 上；
+        # - forward/backward 是用 FP16 模型参数算的，
+        #   所以 loss.backward() 后，梯度先出现在 model_params 上；
         # - 但 optimizer 管的是 master_params；
         # - 因此 optimizer.step() 前，必须把梯度复制到 master_params.grad。
 
@@ -284,16 +279,12 @@ class Trainer(object):
             if master.grad is None:
                 # master.grad 是这个 FP32 主参数对应的梯度。
                 # 如果它现在还是 None，说明还没有给它分配梯度存储空间。
-
                 master.grad = Variable(master.data.new(*master.data.size()))
                 # 这里创建一个和 master.data 形状相同的新张量，用来存放梯度。
-                #
-                # master.data.size() 得到参数张量的形状；
-                # *master.data.size() 是把形状里的各个维度展开成参数传进去；
-                # Variable 是旧版本 PyTorch 里包装张量的写法。
-                #
-                # 新版本 PyTorch 里 Variable 已经基本和 Tensor 合并了，
-                # 但这份代码保留了老写法。
+                # - master.data.size() 得到参数张量的形状；
+                # - *master.data.size() 是把形状里的各个维度展开成参数传进去；
+                # - Variable 是旧版本 PyTorch 里包装张量的写法。
+                #   新版本 PyTorch 里 Variable 已经基本和 Tensor 合并了，但这份代码保留了老写法。
 
             master.grad.data.copy_(model.grad.data)
             # 把 FP16 模型参数上的梯度 model.grad.data，
