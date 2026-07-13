@@ -1,8 +1,20 @@
+# exp0：PyTorch 线性回归入门实验
 
-## 其它文件/文件夹在实验里的作用
-- `train_linear.py`：一个更简单的线性回归入门例子，用来理解“准备数据 -> 定义模型 -> 定义 loss -> 定义 optimizer -> forward/backward/update”的基本套路
-- `dataset.py`：为推理/量化脚本准备数据，其中 `QDataset` 从 `data/q/*.jpg` 读取图片，文件名里的数字作为标签；
-- `data/q/`：一组额外图片，主要给 `QDataset` 和后续量化校准/测试使用；
-- `int8_infer.py`：加载 `weights/<model>.pt`，用 `torch2trt` 尝试转换 TensorRT INT8/FP16 推理，并在 `test.jpg` 上比较普通 PyTorch 模型和 TensorRT 模型的推理时间、预测类别；
-- `test.jpg`：`int8_infer.py` 的单张测试图片；
-- `/__pycache__/`：Python 自动生成的字节码缓存，可以不用关心。
+这个实验只保留最基础的 PyTorch 训练例子，用来理解“模型是怎么被训练出来的”。
+
+
+## 整体过程
+
+- 准备训练数据：输入 `x` 和目标值 `y`。
+- 定义模型：用一个线性层表示 `y = wx + b` 这种关系。
+- 定义 loss：衡量模型预测结果和真实答案差多少。
+- 定义 optimizer：根据梯度更新模型里的参数。
+- 执行训练循环：重复 forward、计算 loss、backward、step，让模型逐渐拟合数据。
+
+### 其它文件/文件夹在实验里的作用
+
+- `train_linear.py`：线性回归训练脚本。它会准备一组简单数据，定义线性模型，计算预测值和真实值之间的 loss，然后通过反向传播和优化器不断更新模型参数。
+
+## 训练结果
+
+## Questions
