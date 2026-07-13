@@ -64,7 +64,7 @@
       - 从 `trainloader` 取出 `inputs` 和 `targets`；
         - 如果使用 GPU，把数据移到 CUDA；
         - 清空上一轮 batch 留下的梯度
-      - `outputs = model(inputs)` 前向传播，得到 10 类 logits；
+      - `outputs = self.model(inputs)` 前向传播，得到 10 类 logits；
       - `loss = criterion(outputs, targets)` 根据模型预测结果 outputs vs 真实训练标签 targets，计算分类损失；
       - `loss.backward()` 反向传播，根据 loss 计算模型每个参数的梯度
       - `optimizer.step()` 根据梯度更新模型参数；
@@ -72,18 +72,23 @@
         - 关于 `utils.py`：详情见注释
           - `progress_bar()`: 这个函数用到了 `format_time(seconds)`
           - `format_time(seconds)`: 耗时格式化
-
----
-
-  - 再调用 `evaluate()` 在测试集上计算准确率；
+  - 再调用 `evaluate()` 在测试集上计算准确率
     - `self.model.eval()` 切换到评估模式；
-    - `with torch.no_grad()` 关闭梯度记录，节省显存和计算；
-    - 遍历 `testloader`，只做前向传播和准确率统计，不更新参数；
-    - `outputs.max(1)` 取 logits 最大的类别作为预测类别；
-    - 如果当前测试准确率超过历史最好值， `self.best_acc`，就调用 `save_model()` 保存权重。
-      - `weights/` 是训练结果保存位置。
-        - 普通训练会保存到 `weights/<model_name>/weights.<epoch>.<acc>.pt`；
-        - FP16 训练会保存到 `weights/<model_name>_fp16/`；
+    - 设置 `test_loss` (累计测试 loss), `correct` (累计预测正确的样本数), `total` (累计已经处理过的样本数) 为 0
+    - 定义损失函数 `nn.CrossEntropyLoss()`, 这里的 loss 是“测试集预测结果 vs 测试集真实标签”。
+      - 它不参与参数更新，只用于观察模型表现。
+    - `with torch.no_grad()` 表示下面这段代码关闭梯度记录，节省显存和计算
+      - 遍历测试集 `testloader` 的每一个 batch，每个 batch 做:
+        - 从 `testloader` 取出测试图片 `test_x` 和测试标签 `test_y`
+          - 如果使用 GPU，把数据移到 CUDA
+        - 前向传播(用当前模型对测试图片做预测)、计算测试 loss
+          - 不更新参数
+        - 累计测试 loss 到 `test_loss`、累计测试样本数量到 `total`、累计预测正确的测试样本数量到 `correct`, 并用 `utils.py` 的 `progress_bar()` 打印进度条
+          - `outputs.max(1)` 取 logits 最大的类别作为预测类别；
+    - 计算当前 epoch 测试准确率 `acc`, 如果超过历史最好值 `self.best_acc`，就调用 `save_model()` 保存权重。
+      - `./weights/` 是训练结果保存位置。
+        - 普通训练会保存到 `./weights/<model_name>/weights.<epoch>.<acc>.pt`；
+        - FP16 训练会保存到 `./weights/<model_name>_fp16/`；
         - `.pt` 文件里保存了三项：`net` 模型参数、`acc` 准确率、`epoch` 轮数。
 
 
@@ -103,4 +108,4 @@
 
 # Questions
 `data.py`
-??? 通过补注释 我知道了这行代码大概做了什么，但我并不知道例如“RandomCrop对图像进行随机裁剪”到底有什么作用 (说看懂也感觉很虚), i.e., 如果不做会怎么样 / 对这些图像为什么需要这样的预处理流程/ 为什么这套预处理流程这样排序 / 换一套别的预处理流程会有什么样的效果
+??? 补注释后 还是不知道例如“RandomCrop对图像进行随机裁剪”到底有什么作用, i.e., 这是一套经典默认的、还是只是有个论文这么写 / 换一套别的预处理流程会有什么样的效果

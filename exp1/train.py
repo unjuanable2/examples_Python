@@ -186,17 +186,16 @@ class Trainer(object):
         """
         为 FP16 训练准备两套参数。
 
-        第一套：model_params
+        第一套: model_params
         - 来自 model.parameters()
         - 是模型里真正参与前向传播和反向传播的参数
         - 在 FP16 模式下，它们大部分是半精度参数
 
-        第二套：master_params
+        第二套: master_params
         - 是从 model_params 复制出来的一份 FP32 参数
-        - 不直接参与模型 forward
-        - 专门交给 optimizer 更新
+        - 不直接参与模型 forward, 专门交给 optimizer 更新
 
-        为什么不只保留 FP16 参数？
+        为什么不只保留 FP16 参数 ？
         - FP16 计算快、省显存；
         - 但 FP16 精度低，参数更新量很小时可能表示不出来；
         - 所以训练时用 FP16 做计算，用 FP32 保存“更精细的权重版本”。
@@ -212,35 +211,95 @@ class Trainer(object):
         # p.requires_grad 为 True 表示这个参数需要计算梯度、需要被训练更新。
 
         master_params = [p.detach().clone().float() for p in model_params]
-        # master_params 也是一个列表。
-        # 它是从 model_params 复制出来的一份 FP32 参数。
+        # master_params 也是一个列表, 是从 model_params 复制出来的一份 FP32 参数。
         #
-        # p.detach()：从原计算图里分离出来，避免和原参数共享梯度历史；
-        # clone()：复制一份新的数据；
-        # float()：转成 FP32。
+        # p.detach()：从原计算图里分离出来，避免和原参数共享梯度历史
+        # clone()：复制一份新的数据
+        # float()：转成 FP32
 
         for p in master_params:
             p.requires_grad = True
             # master_params 后面要被优化器更新，所以也需要梯度。
 
-        return model_params, master_params
         # 返回两套参数。
         # 调用处用：
         # self.model_params, self.master_params = self.prep_param_list(self.model)
         # 分别接住这两个返回值。
+        return model_params, master_params
 
     def master_params_to_model_params(self, model_params, master_params):
         """
         把 FP32 主参数复制回 FP16 模型参数。
         """
+        # 这个函数只在 FP16 训练模式下使用。
+        #
+        # 参数含义：
+        # - model_params：模型里实际用于 forward/backward 的 FP16 参数列表
+        # - master_params：优化器实际更新的 FP32 主参数列表
+        #
+        # 为什么需要这个函数？
+        # FP16 模式下，optimizer.step() 更新的是 master_params。
+        # 但是下一次 forward 时，模型用的是 model_params。
+        # 所以每次更新完 master_params 后，都要把新数值复制回 model_params。
+
         for model, master in zip(model_params, master_params):
+            # (语法) zip(model_params, master_params)
+            # 会把两个列表按位置配对。
+            #
+            # 例如：
+            # model_params = [m1, m2, m3]
+            # master_params = [p1, p2, p3]
+            # zip(...) 之后每次循环得到：
+            # (m1, p1), (m2, p2), (m3, p3)
+            #
+            # 这里的 model 和 master 不是“模型对象”和“主模型”，
+            # 而是两套参数列表中位置对应的两个参数张量。
+
             model.data.copy_(master.data)
+            # copy_(...) 是原地复制。
+            # master.data 是 FP32 主参数的数值；
+            # model.data 是 FP16 模型参数的数值。
+            #
+            # 这句的意思是：
+            # 把更新后的 FP32 主参数数值复制到对应的 FP16 模型参数里。
+            #
+            # 下划线结尾的 copy_ 是 PyTorch 命名习惯：
+            # 表示这个操作会直接修改调用它的对象本身。
 
     def model_grads_to_master_grads(self, model_params, master_params):
+        # 这个函数也只在 FP16 训练模式下使用。
+        #
+        # 作用：
+        # 把 FP16 模型参数上的梯度，复制到 FP32 主参数上。
+        #
+        # 为什么要复制梯度？
+        # - forward/backward 是用 FP16 模型参数算的；
+        # - 所以 loss.backward() 后，梯度先出现在 model_params 上；
+        # - 但 optimizer 管的是 master_params；
+        # - 因此 optimizer.step() 前，必须把梯度复制到 master_params.grad。
+
         for model, master in zip(model_params, master_params):
+            # 同样是把两套参数列表中位置对应的参数配对。
+
             if master.grad is None:
+                # master.grad 是这个 FP32 主参数对应的梯度。
+                # 如果它现在还是 None，说明还没有给它分配梯度存储空间。
+
                 master.grad = Variable(master.data.new(*master.data.size()))
+                # 这里创建一个和 master.data 形状相同的新张量，用来存放梯度。
+                #
+                # master.data.size() 得到参数张量的形状；
+                # *master.data.size() 是把形状里的各个维度展开成参数传进去；
+                # Variable 是旧版本 PyTorch 里包装张量的写法。
+                #
+                # 新版本 PyTorch 里 Variable 已经基本和 Tensor 合并了，
+                # 但这份代码保留了老写法。
+
             master.grad.data.copy_(model.grad.data)
+            # 把 FP16 模型参数上的梯度 model.grad.data，
+            # 复制到 FP32 主参数的梯度 master.grad.data。
+            #
+            # 复制完后，optimizer.step() 才知道应该怎样更新 master_params。
 
     def BN_convert_float(self, module):
         '''
@@ -250,10 +309,34 @@ class Trainer(object):
         不能直接使用内置的 .apply，因为 .apply 会把函数应用到所有模块、参数和缓冲区，
         这样就无法根据模块类型只保护 BatchNorm 的 float 转换。
         '''
+        # 参数含义：
+        # - module：一个 PyTorch 模块，可以是整个模型，也可以是模型里的某一层。
+        #
+        # 这个函数会递归遍历 module 的所有子模块。
+        # 如果某个子模块是 BatchNorm，就把它转回 FP32。
+        #
+        # 为什么 BatchNorm 不适合直接 FP16？
+        # BatchNorm 会计算均值、方差这类统计量。
+        # 这些统计量对数值精度更敏感，用 FP32 通常更稳定。
+
         if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+            # (语法) isinstance(x, 类型)
+            # 用来判断 x 是不是某个类型的对象。
+            #
+            # torch.nn.modules.batchnorm._BatchNorm 是 PyTorch 中 BatchNorm 系列层的基础类型。
+            # BatchNorm1d、BatchNorm2d、BatchNorm3d 都属于这一类。
+
             module.float()
+            # 如果当前模块是 BatchNorm，就把它转成 FP32。
+
         for child in module.children():
+            # module.children() 会返回当前模块的直接子模块。
+            # 例如一个 ResNet 里有很多 layer，layer 里又有 conv/bn/relu。
+
             self.BN_convert_float(child)
+            # 递归调用自己，继续检查子模块的子模块。
+
+        # 返回处理后的 module。
         return module
 
     class tofp16(nn.Module):
@@ -265,24 +348,89 @@ class Trainer(object):
         """
 
         def __init__(self):
+            # tofp16 也是一个 PyTorch 模块类。
+            # 它继承自 nn.Module，所以也需要初始化父类。
+
             super(Trainer.tofp16, self).__init__()
+            # (语法) super(...).__init__()
+            # 表示调用父类 nn.Module 的初始化方法。
+            # 这样 PyTorch 才能正确把这个类当作一个神经网络层来管理。
 
         def forward(self, input):
+            # forward(...) 定义这个模块前向传播时做什么。
+            # 参数 input 是进入这个层的输入张量。
+
+            # half() 把输入张量转换成 FP16。
+            # 这个小模块的唯一作用就是：
+            # 让进入半精度模型的输入也变成半精度。
             return input.half()
 
     def network_to_half(self, network):
         """
         用对 BatchNorm 安全的方式把模型转换成半精度。
         """
+        # 参数含义：
+        # - network：要转换成 FP16 的模型对象。
+        #
+        # 目标：
+        # - 大部分层转成 FP16，提高速度、节省显存；
+        # - BatchNorm 层保持 FP32，减少数值不稳定。
+
+        # nn.Sequential(...) 会把多个模块按顺序串起来。
+        #
+        # 这里串了两部分：
+        # 1. self.tofp16()
+        #    先把输入张量转成 FP16；
+        # 2. self.BN_convert_float(network.half())
+        #    network.half() 先把整个模型转成 FP16，
+        #    BN_convert_float(...) 再把其中的 BatchNorm 层转回 FP32。
+        #
+        # 所以最终得到的是一个“输入先转 FP16，再进入模型”的新模型包装。
         return nn.Sequential(self.tofp16(),
                              self.BN_convert_float(network.half()))
 
     def warmup_learning_rate(self, init_lr, no_of_steps, epoch, len_epoch):
         """前 5 个 epoch 使用学习率预热。"""
+        # 参数含义：
+        # - init_lr：初始学习率，也就是 main.py 里 --lr 传进来的值
+        # - no_of_steps：总 epoch 数，也就是 main.py 里的 --steps
+        # - epoch：当前 epoch 编号，从 0 开始
+        # - len_epoch：一个 epoch 里有多少个 batch，也就是 len(trainloader)
+        #
+        # 这个函数返回当前 warmup 阶段应该使用的学习率。
+        #
+        # 学习率预热的直觉：
+        # 训练刚开始时，模型参数是随机的。
+        # 如果一上来就用很大的学习率，参数可能被更新得太猛。
+        # warmup 会让学习率从较小值逐渐升高。
+
         factor = no_of_steps // 30
+        # // 是整数除法。
+        # no_of_steps // 30 表示总训练 epoch 数除以 30 后向下取整。
+        #
+        # 例如 no_of_steps=200 时：
+        # factor = 200 // 30 = 6。
+        #
+        # 这个 factor 会影响下面初始 lr 的缩放。
+
         lr = init_lr * (0.1**factor)
-        """执行预热计算。"""
+        # ** 表示乘方。
+        # 0.1**factor 表示 0.1 的 factor 次方。
+        #
+        # 这里先把 init_lr 缩小很多，作为 warmup 起点附近的学习率。
+
+        # 执行预热计算。
         lr = lr * float(1 + epoch + no_of_steps * len_epoch) / (5. * len_epoch)
+        # 这一行根据当前 epoch、总 epoch 数、每个 epoch 的 batch 数计算 warmup 学习率。
+        #
+        # float(...) 把结果转成浮点数。
+        # 5. 等价于 5.0，表示前 5 个 epoch 做预热。
+        #
+        # 简单理解：
+        # 这个公式会让 lr 在训练开始的前 5 个 epoch 内逐步变化，
+        # 而不是一开始就直接使用 self.lr。
+
+        # 返回计算出的学习率，调用处会把它写入 optimizer.param_groups。
         return lr
 
     def train(self, epoch, no_of_steps, trainloader):
@@ -514,7 +662,6 @@ class Trainer(object):
 
     def evaluate(self, epoch, testloader):
         # evaluate(...) 是 Trainer 类里的一个方法，用来在测试集上评估模型。
-        #
         # 参数含义：
         # - epoch：当前是第几个 epoch
         # - testloader：测试集的数据加载器，会一批一批提供测试图片和标签
@@ -524,21 +671,17 @@ class Trainer(object):
 
         ############################ 设置模型为评估模式 ################################
         self.model.eval()
-        # self.model.eval() 把模型切换到评估模式。
+        # 把模型切换到评估模式。
         #
         # 和 train() 相反：
         # - BatchNorm 不再用当前 batch 更新统计量
         # - Dropout 不再随机丢弃神经元
-        #
         # 这样测试结果更稳定。
 
-        test_loss = 0
-        correct = 0
-        total = 0
         # 初始化测试阶段的统计变量：
-        # - test_loss：累计测试 loss
-        # - correct：累计预测正确的测试样本数
-        # - total：累计测试样本总数
+        test_loss = 0 # 累计测试 loss
+        correct = 0 # 累计预测正确的测试样本数
+        total = 0 # 累计测试样本总数
 
         criterion = nn.CrossEntropyLoss()
         # 测试阶段也用交叉熵损失。
@@ -552,13 +695,12 @@ class Trainer(object):
             # 关闭梯度记录可以节省显存和计算量。
 
             for idx, (test_x, test_y) in enumerate(testloader):
-                # 从测试集 DataLoader 中一批一批取数据。
+                # 从测试集 testloader 中一批一批取数据。
                 # test_x 是测试图片，test_y 是测试标签。
 
-                if self.train_on_gpu:
+                if self.train_on_gpu: # 如果模型在 GPU 上，测试数据也要移动到 GPU。
                     test_x, test_y = test_x.cuda(), test_y.cuda()
-                    # 如果模型在 GPU 上，测试数据也要移动到 GPU。
-
+                    
                 outputs = self.model(test_x)
                 # 前向传播：用当前模型对测试图片做预测。
                 # 这里只预测，不训练。
@@ -574,10 +716,10 @@ class Trainer(object):
                 # 取每张测试图片分数最高的类别，作为预测类别。
 
                 total += test_y.size(0)
-                # 累计测试样本数量。
+                # 累计测试样本数量
 
                 correct += (predicted == test_y).sum().item()
-                # 累计预测正确的测试样本数量。
+                # 累计预测正确的测试样本数量
 
                 progress_bar(
                     idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)' %
@@ -585,64 +727,188 @@ class Trainer(object):
                 # 打印测试进度条。
                 # 这里显示的是测试集上的 loss 和准确率。
 
-        acc = 100.0 * correct / total
-        # 计算当前 epoch 的测试准确率，单位是百分比。
-
+        acc = 100.0 * correct / total # 计算当前 epoch 的测试准确率，单位是百分比。
         if acc > self.best_acc:
             self.save_model(self.model, self.model_name, acc, epoch)
             # 如果当前测试准确率超过历史最好准确率，就保存模型。
             # 所以 weights/ 里保存的是测试表现更好的模型参数。
 
     def save_model(self, model, model_name, acc, epoch):
+        # save_model(...) 用来保存当前模型权重。
+        #
+        # 参数含义：
+        # - model：要保存的模型对象
+        # - model_name：模型名字，例如 'resnet18'
+        # - acc：当前模型在测试集上的准确率
+        # - epoch：当前 epoch 编号
+        #
+        # 这个函数在 evaluate() 里被调用：
+        # 如果当前测试准确率 acc 超过历史最好 self.best_acc，
+        # 就保存一次模型。
+
         state = {
             'net': model.state_dict(),
             'acc': acc,
             'epoch': epoch,
         }
+        # state 是一个字典 dict，用来打包要保存的信息。
+        #
+        # (语法) 字典用 {key: value} 表示。
+        #
+        # 这里保存了三项：
+        # - 'net'：模型参数
+        # - 'acc'：保存时的测试准确率
+        # - 'epoch'：保存时是第几个 epoch
+        #
+        # model.state_dict() 是 PyTorch 模型对象的方法。
+        # 它返回模型所有可学习参数和 buffer 的字典。
+        # 真正恢复模型时，主要靠这里的 'net'。
 
         if self.fp16_mode:
+            # 如果当前是 FP16 模式，权重保存到 weights/<model_name>_fp16/ 目录。
+
             save_name = os.path.join('weights', model_name + '_fp16',
                                      'weights.%03d.%.03f.pt' % (epoch, acc))
         else:
+            # 普通 FP32 模式，权重保存到 weights/<model_name>/ 目录。
+
             save_name = os.path.join('weights', model_name,
                                      'weights.%03d.%.03f.pt' % (epoch, acc))
+        # os.path.join(...) 用来拼接路径。
+        # 这样比手写 'weights/' + model_name 更稳妥。
+        #
+        # 'weights.%03d.%.03f.pt' % (epoch, acc) 是字符串格式化：
+        # - %03d：把 epoch 格式化成至少 3 位整数，不足补 0，例如 7 -> 007
+        # - %.03f：把 acc 格式化成保留 3 位小数
+        #
+        # 例如可能得到：
+        # weights/resnet18/weights.012.84.530.pt
 
         if not os.path.exists(os.path.dirname(save_name)):
+            # os.path.dirname(save_name) 取出文件所在目录。
+            # 例如 save_name 是 weights/resnet18/weights.012.84.530.pt，
+            # dirname 就是 weights/resnet18。
+            #
+            # os.path.exists(...) 检查这个目录是否已经存在。
+            # not 表示取反。
+
             os.makedirs(os.path.dirname(save_name))
+            # 如果目录不存在，就递归创建目录。
+            # makedirs 可以一次创建多级目录，例如 weights/resnet18。
 
         torch.save(state, save_name)
+        # torch.save(...) 把 state 保存到磁盘文件。
+        # 保存出来的是 .pt 文件，后面可以用 torch.load(...) 读回来。
+
         print("\nSaved state at %.03f%% accuracy. Prev accuracy: %.03f%%" %
               (acc, self.best_acc))
+        # 打印保存提示：
+        # 当前准确率是多少，之前最好准确率是多少。
+
         self.best_acc = acc
+        # 更新历史最好准确率。
+
         self.best_epoch = epoch
+        # 更新历史最好准确率对应的 epoch。
 
     def load_model(self, path=None):
         """
         加载之前保存的模型。这里不会检查精度类型。
         """
+        # load_model(...) 用来从磁盘加载之前保存的权重。
+        #
+        # 参数含义：
+        # - path：可选参数。
+        #   如果传了 path，就加载指定路径的模型文件；
+        #   如果没有传，就尝试根据 self.best_epoch / self.best_acc 拼出默认路径。
+        #
+        # 注意：
+        # 这个函数当前代码里没有在 main.py 中直接调用。
+        # 它是一个工具函数，方便以后恢复训练或测试已有权重。
+
         if path is not None:
+            # 如果用户显式传入了路径，就直接使用这个路径。
+
             checkpoint_name = path
         elif self.fp16_mode:
+            # 如果没有传 path，并且当前是 FP16 模式，
+            # 就尝试去 weights/<model_name>_fp16/ 目录里找最好模型。
+
             checkpoint_name = os.path.join(
                 'weights', self.model_name + '_fp16',
                 'weights.%03d.%.03f.pt' % (self.best_epoch, self.best_acc))
         else:
+            # 普通 FP32 模式下，理论上应该去 weights/<model_name>/ 目录找。
+            #
+            # 但这里原代码写的是 self.model_name + '_fp16'，
+            # 也就是说它仍然会去 *_fp16 目录找。
+            # 这很可能是原代码里的一个小 bug。
+            # 因为当前主训练流程没有调用 load_model()，所以不影响 main.py 训练。
+
             checkpoint_name = os.path.join(
                 'weights', self.model_name + '_fp16',
                 'weights.%03d.%.03f.pt' % (self.best_epoch, self.best_acc))
         if not os.path.exists(checkpoint_name):
+            # 如果目标权重文件不存在，就打印提示并返回。
+
             print("Best model not found")
+            # return 表示提前结束函数。
             return
+
         checkpoint = torch.load(checkpoint_name)
+        # torch.load(...) 从 .pt 文件里读取保存的数据。
+        # 这里读出来的 checkpoint 是前面 save_model() 保存的 state 字典。
+
         self.model.load_state_dict(checkpoint['net'])
+        # load_state_dict(...) 把 checkpoint['net'] 里的参数加载进当前模型。
+        #
+        # checkpoint['net'] 对应 save_model() 里的：
+        # 'net': model.state_dict()
+
         self.best_acc = checkpoint['acc']
+        # 恢复保存时的最好准确率。
+
         self.best_epoch = checkpoint['epoch']
+        # 恢复保存时的 epoch。
+
         print("Loaded Model with accuracy: %.3f%%, from epoch: %d" %
               (checkpoint['acc'], checkpoint['epoch'] + 1))
+        # 打印加载结果。
+        # checkpoint['epoch'] 是从 0 开始计数，所以显示给人看时加 1。
 
     def train_and_evaluate(self, traindataloader, testdataloader, no_of_steps):
+        # train_and_evaluate(...) 是整个训练流程的外层循环。
+        #
+        # 参数含义：
+        # - traindataloader：训练集 DataLoader
+        # - testdataloader：测试集 DataLoader
+        # - no_of_steps：训练多少个 epoch
+        #
+        # 这个函数在 main.py 的最后被调用：
+        # trainer.train_and_evaluate(trainloader, testloader, args.steps)
+
         self.best_acc = 0.0
+        # 开始训练前，把历史最好准确率重置为 0。
+        # 后面 evaluate() 如果发现更高准确率，会保存模型并更新 self.best_acc。
+
         for i in range(no_of_steps):
+            # (语法) range(no_of_steps) 会生成 0 到 no_of_steps-1 的整数序列。
+            #
+            # 如果 no_of_steps=200，那么 i 会依次是：
+            # 0, 1, 2, ..., 199
+            #
+            # 每一次循环就是一个 epoch。
+
             print('\nEpoch: %d' % (i + 1))
+            # 打印当前 epoch。
+            # i 从 0 开始，但显示给人看通常从 1 开始，所以用 i + 1。
+
             self.train(i, no_of_steps, traindataloader)
+            # 先在训练集上训练一个 epoch。
+            # 这里会更新模型参数。
+
             self.evaluate(i, testdataloader)
+            # 再在测试集上评估一次。
+            # 这里不会更新模型参数。
+            #
+            # 如果测试准确率比历史最好高，evaluate() 里会调用 save_model() 保存权重。
