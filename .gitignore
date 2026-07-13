@@ -1,9 +1,20 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+########################## exp1 ##########################
+
+# 目的：忽略 exp1 目录下的 __pycache__ 文件夹，避免将编译后的 Python 字节码文件提交到版本控制系统中。
 exp1/__pycache__/
+
+# 目的：忽略 exp1/models 目录下的 __pycache__ 文件夹，避免将编译后的 Python 字节码文件提交到版本控制系统中。
 exp1/models/__pycache__/
-exp1/data/cifar-10-batches-py/
+
+# 目的：忽略 exp1/data 目录下的所有文件 (有点大)，除了 .gitkeep 文件。
+# .gitkeep 文件的作用：一个空的占位文件，用于确保 Git 能够跟踪空目录。
+#                   因为 Git 默认不跟踪空目录，所以在需要保留空目录结构时，可以放置一个 .gitkeep 文件。
+exp1/data/*
+!exp1/data/.gitkeep
 
 # Model checkpoints / trained weights
 exp1/weights/
