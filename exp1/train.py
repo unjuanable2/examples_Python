@@ -293,32 +293,24 @@ class Trainer(object):
             # 复制完后，optimizer.step() 才知道应该怎样更新 master_params。
 
     def BN_convert_float(self, module):
-        '''
-        配合 network_to_half 使用。
-        BatchNorm 层需要保持单精度参数。
-        这里递归查找所有子层，并把 BatchNorm 层转回 float。
-        不能直接使用内置的 .apply，因为 .apply 会把函数应用到所有模块、参数和缓冲区，
-        这样就无法根据模块类型只保护 BatchNorm 的 float 转换。
-        '''
         # 参数含义：
         # - module：一个 PyTorch 模块，可以是整个模型，也可以是模型里的某一层。
         #
-        # 这个函数会递归遍历 module 的所有子模块。
-        # 如果某个子模块是 BatchNorm，就把它转回 FP32。
+        # 作用：这个函数会递归遍历 module 的所有子模块。
+        # - 如果某个子模块是 BatchNorm (需要保持单精度参数)，递归查找所有子层，并把 BatchNorm 层转回 FP32。
+        # - 为什么 BatchNorm 不适合直接 FP16？
+        #   BatchNorm 会计算均值、方差这类统计量。这些统计量对数值精度更敏感，用 FP32 通常更稳定。
         #
-        # 为什么 BatchNorm 不适合直接 FP16？
-        # BatchNorm 会计算均值、方差这类统计量。
-        # 这些统计量对数值精度更敏感，用 FP32 通常更稳定。
+        # 不能直接使用内置的 .apply，因为 .apply 会把函数应用到所有模块、参数和缓冲区，
+        # 这样就无法根据模块类型只保护 BatchNorm 的 float 转换。
 
         if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-            # (语法) isinstance(x, 类型)
-            # 用来判断 x 是不是某个类型的对象。
+            # isinstance(x, 类型) 用来判断 x 是不是某个类型的对象。
             #
             # torch.nn.modules.batchnorm._BatchNorm 是 PyTorch 中 BatchNorm 系列层的基础类型。
             # BatchNorm1d、BatchNorm2d、BatchNorm3d 都属于这一类。
 
-            module.float()
-            # 如果当前模块是 BatchNorm，就把它转成 FP32。
+            module.float() # 如果当前模块是 BatchNorm，就把它转成 FP32。
 
         for child in module.children():
             # module.children() 会返回当前模块的直接子模块。
@@ -330,36 +322,73 @@ class Trainer(object):
         # 返回处理后的 module。
         return module
 
-    class tofp16(nn.Module):
-        """
-        添加一个层，用来把输入转换成 FP16。
-        这是一个模型包装层，实现的逻辑相当于：
-            def forward(self, input):
-                return input.half()
-        """
+    class tofp16(nn.Module): # 这里是在 class Trainer 里面又定义了一个 class tofp16。
+        # (语法) 类里面可以再定义类，这种写法叫“嵌套类”。
+        #
+        # 这不表示 tofp16 是一个新的 Trainer，也不表示它会单独训练模型。
+        # 它只是一个很小的 PyTorch 模块/层，作用只有一个：把输入 tensor 从 FP32 转成 FP16。
+        #
+        # 为什么要把它写在 Trainer 里面？
+        # 因为它只在 Trainer.network_to_half(...) 这个 FP16 转换流程里使用，
+        # 放在 Trainer 里面可以表达：
+        #   “这个小工具类是 Trainer 的内部辅助工具，不是给外部单独使用的主类。”
+        #
+        # 如果写在 Trainer 外面也可以，例如：
+        # class tofp16(nn.Module):
+        #     ...
+        #
+        # 但写在 Trainer 里面后，完整名字就是 Trainer.tofp16。
+        # 所以下面 __init__ 里会看到 super(Trainer.tofp16, self).__init__()。
+        #
+        # 注意：
+        # - Trainer 是训练器类，负责训练、评估、保存模型等完整流程；
+        # - tofp16 是一个小模块类，只负责 input.half()；
+        # - 两者不是同一级别的东西。
 
-        def __init__(self):
-            # tofp16 也是一个 PyTorch 模块类。
-            # 它继承自 nn.Module，所以也需要初始化父类。
+        def __init__(self): # 这个 tofp16 类的构造方法。
+            # 当代码执行 self.tofp16() 时：
+            # - self 是 Trainer 对象；
+            # - self.tofp16 表示访问 Trainer 里面定义的 tofp16 类；
+            # - self.tofp16() 表示创建一个 tofp16 对象/实例。
+            #
+            # 这个 tofp16 对象会被当作神经网络中的一层来用。
+            # 虽然它没有 weight、bias 这种可训练参数，
+            # 但它继承了 nn.Module，所以可以放进 nn.Sequential。
+            #
+            # tofp16 继承自 nn.Module，因此也需要初始化父类 nn.Module。
+            # PyTorch 依靠 nn.Module 的初始化逻辑来管理模块、子模块、参数等。
 
             super(Trainer.tofp16, self).__init__()
             # (语法) super(...).__init__()
-            # 表示调用父类 nn.Module 的初始化方法。
-            # 这样 PyTorch 才能正确把这个类当作一个神经网络层来管理。
+            #
+            # Trainer.tofp16 是当前这个嵌套类的完整名字。
+            # 这一行的意思是：
+            #   “请按父类 nn.Module 的规则，初始化当前这个 tofp16 对象。”
 
         def forward(self, input):
             # forward(...) 定义这个模块前向传播时做什么。
             # 参数 input 是进入这个层的输入张量。
+            #
+            # 普通 Python 类没有规定一定要写 forward。
+            # 但 PyTorch 里的神经网络层通常继承自 nn.Module。
+            # nn.Module 规定了一套用法：
+            # - 你在子类里定义 forward(...)；
+            # - PyTorch 会在“模块对象被调用”(像调用函数一样调用一个模块对象) 时，自动转去执行 forward(...)。
+            # 例如：
+            #   layer = Trainer.tofp16() # 一个 tofp16 对象/实例，不是普通函数
+            #   y = layer(x) # 因为 tofp16 继承了 nn.Module，所以它可以像函数一样写 layer(x)。
+            #
+            # 简化理解时，可以把它看成 PyTorch 帮你间接调用：y = layer.forward(x)
+            #
+            # 更准确地说，中间会先进入 nn.Module.__call__(...)，
+            # 再由 __call__(...) 去调用 forward(...)。
+            # 这样 PyTorch 可以在 forward 前后做一些额外管理，e.g., hook、训练/评估状态相关逻辑等。
 
             # half() 把输入张量转换成 FP16。
-            # 这个小模块的唯一作用就是：
-            # 让进入半精度模型的输入也变成半精度。
+            # 这个小模块的唯一作用就是：让进入半精度模型的输入也变成半精度。
             return input.half()
 
     def network_to_half(self, network):
-        """
-        用对 BatchNorm 安全的方式把模型转换成半精度。
-        """
         # 参数含义：
         # - network：要转换成 FP16 的模型对象。
         #
@@ -371,55 +400,83 @@ class Trainer(object):
         #
         # 这里串了两部分：
         # 1. self.tofp16()
-        #    先把输入张量转成 FP16；
+        #    创建一个 tofp16 小模块，先把输入张量转成 FP16；
+        #    它没有训练参数，只做 input.half() 这一步。
         # 2. self.BN_convert_float(network.half())
         #    network.half() 先把整个模型转成 FP16，
         #    BN_convert_float(...) 再把其中的 BatchNorm 层转回 FP32。
         #
         # 所以最终得到的是一个“输入先转 FP16，再进入模型”的新模型包装。
+        # 输入数据进入这个 Sequential 后，执行顺序大概是：
+        #   原始 input
+        #     -> tofp16.forward(input)，得到 FP16 input
+        #     -> 半精度 network 继续 forward
+        #     -> 输出结果
         return nn.Sequential(self.tofp16(),
                              self.BN_convert_float(network.half()))
 
     def warmup_learning_rate(self, init_lr, no_of_steps, epoch, len_epoch):
-        """前 5 个 epoch 使用学习率预热。"""
         # 参数含义：
         # - init_lr：初始学习率，也就是 main.py 里 --lr 传进来的值
         # - no_of_steps：总 epoch 数，也就是 main.py 里的 --steps
         # - epoch：当前 epoch 编号，从 0 开始
         # - len_epoch：一个 epoch 里有多少个 batch，也就是 len(trainloader)
         #
-        # 这个函数返回当前 warmup 阶段应该使用的学习率。
-        #
+        # 作用：这个函数返回当前 warmup 阶段应该使用的学习率。
+        # 前 5 个 epoch 使用学习率预热
+        # 
         # 学习率预热的直觉：
         # 训练刚开始时，模型参数是随机的。
         # 如果一上来就用很大的学习率，参数可能被更新得太猛。
         # warmup 会让学习率从较小值逐渐升高。
 
         factor = no_of_steps // 30
-        # // 是整数除法。
+        # (语法) // 是整数除法。
         # no_of_steps // 30 表示总训练 epoch 数除以 30 后向下取整。
-        #
-        # 例如 no_of_steps=200 时：
-        # factor = 200 // 30 = 6。
-        #
+        # 例如 no_of_steps=200，factor = 200 // 30 = 6。
         # 这个 factor 会影响下面初始 lr 的缩放。
 
         lr = init_lr * (0.1**factor)
-        # ** 表示乘方。
+        # (语法) ** 表示乘方。
         # 0.1**factor 表示 0.1 的 factor 次方。
         #
         # 这里先把 init_lr 缩小很多，作为 warmup 起点附近的学习率。
 
-        # 执行预热计算。
+        # 执行预热计算。   
         lr = lr * float(1 + epoch + no_of_steps * len_epoch) / (5. * len_epoch)
-        # 这一行根据当前 epoch、总 epoch 数、每个 epoch 的 batch 数计算 warmup 学习率。
+        # 这一行根据当前 epoch、总 epoch 数 (no_of_steps)、每个 epoch 的 batch 数 (len_epoch) 计算 warmup 学习率。
         #
         # float(...) 把结果转成浮点数。
-        # 5. 等价于 5.0，表示前 5 个 epoch 做预热。
         #
-        # 简单理解：
-        # 这个公式会让 lr 在训练开始的前 5 个 epoch 内逐步变化，
-        # 而不是一开始就直接使用 self.lr。
+        # 可以把这个公式拆成两部分看：
+        # 1. 前面的 lr 是上面已经算过的 lr = init_lr * (0.1 ** factor)
+        #    也就是说，它已经被缩小了很多。
+        #    例如：
+        #      init_lr = 0.2
+        #      no_of_steps = 200
+        #      factor = 200 // 30 = 6
+        #      lr = 0.2 * (0.1 ** 6) = 0.0000002
+        # 2. 后面的比例
+        #    - 为什么还要乘这个分式？
+        #      因为如果直接使用前面算出来的 lr，那前 5 个 epoch 的学习率就是同一个固定小值。
+        #      固定小学习率当然也能跑，但它只是“先小一点训练”，不是严格意义上的“预热 warmup”。
+        #    - 分母 5. * len_epoch = 前 5 个 epoch 一共有多少个 batch
+        #    - 分子 1 + epoch + no_of_steps * len_epoch：
+        #      - epoch 是当前第几个 epoch，0、1、2、3、4；
+        #      - no_of_steps * len_epoch = 总 epoch 数 * 每个 epoch 的 batch 数
+        #      - +1 是为了避免一开始乘出来是 0。
+        #
+        # 注意：
+        # 按当前代码的调用方式：
+        #   self.warmup_learning_rate(self.lr, no_of_steps, epoch, len(trainloader))
+        # 当前函数每个 epoch 只调用一次，而且这里的 no_of_steps 是总 epoch 数，
+        # 当前代码没有传入“当前 batch 是第几个”，
+        # 所以这个公式得到的不是每个 batch 都明显变大一点的那种平滑 warmup。 
+        #
+        # 也就是说，当前代码的效果更接近：
+        # - epoch 0~4：用一个很小的 lr，让训练先慢慢动起来；
+        # - epoch 5：在 train(...) 里把 lr 恢复成 self.lr，例如 0.2；
+        # - epoch 5 之后：再交给 MultiStepLR 按 milestone 衰减。
 
         # 返回计算出的学习率，调用处会把它写入 optimizer.param_groups。
         return lr
@@ -734,16 +791,13 @@ class Trainer(object):
         # - epoch：当前 epoch 编号
         #
         # 这个函数在 evaluate() 里被调用：
-        # 如果当前测试准确率 acc 超过历史最好 self.best_acc，
-        # 就保存一次模型。
+        # 如果当前测试准确率 acc 超过历史最好 self.best_acc，就保存一次模型。
 
-        state = {
+        state = { # 一个字典 dict，用来打包要保存的信息
             'net': model.state_dict(),
             'acc': acc,
             'epoch': epoch,
-        }
-        # state 是一个字典 dict，用来打包要保存的信息。
-        #
+        } 
         # (语法) 字典用 {key: value} 表示。
         #
         # 这里保存了三项：
@@ -751,18 +805,13 @@ class Trainer(object):
         # - 'acc'：保存时的测试准确率
         # - 'epoch'：保存时是第几个 epoch
         #
-        # model.state_dict() 是 PyTorch 模型对象的方法。
-        # 它返回模型所有可学习参数和 buffer 的字典。
+        # model.state_dict() 是 PyTorch 模型对象的方法，返回模型所有可学习参数和 buffer 的字典。
         # 真正恢复模型时，主要靠这里的 'net'。
 
-        if self.fp16_mode:
-            # 如果当前是 FP16 模式，权重保存到 weights/<model_name>_fp16/ 目录。
-
+        if self.fp16_mode: # 如果当前是 FP16 模式，权重保存到 weights/<model_name>_fp16/ 目录。
             save_name = os.path.join('weights', model_name + '_fp16',
                                      'weights.%03d.%.03f.pt' % (epoch, acc))
-        else:
-            # 普通 FP32 模式，权重保存到 weights/<model_name>/ 目录。
-
+        else: # 普通 FP32 模式，权重保存到 weights/<model_name>/ 目录。
             save_name = os.path.join('weights', model_name,
                                      'weights.%03d.%.03f.pt' % (epoch, acc))
         # os.path.join(...) 用来拼接路径。
@@ -772,15 +821,15 @@ class Trainer(object):
         # - %03d：把 epoch 格式化成至少 3 位整数，不足补 0，例如 7 -> 007
         # - %.03f：把 acc 格式化成保留 3 位小数
         #
-        # 例如可能得到：
-        # weights/resnet18/weights.012.84.530.pt
+        # 例如可能得到：weights/resnet18/weights.012.84.530.pt
 
         if not os.path.exists(os.path.dirname(save_name)):
             # os.path.dirname(save_name) 取出文件所在目录。
-            # 例如 save_name 是 weights/resnet18/weights.012.84.530.pt，
-            # dirname 就是 weights/resnet18。
-            #
+            # e.g. save_name 是 weights/resnet18/weights.012.84.530.pt，
+            #      dirname() 就是 weights/resnet18。
+             
             # os.path.exists(...) 检查这个目录是否已经存在。
+
             # not 表示取反。
 
             os.makedirs(os.path.dirname(save_name))
@@ -793,8 +842,7 @@ class Trainer(object):
 
         print("\nSaved state at %.03f%% accuracy. Prev accuracy: %.03f%%" %
               (acc, self.best_acc))
-        # 打印保存提示：
-        # 当前准确率是多少，之前最好准确率是多少。
+        # 打印保存提示：当前准确率是多少，之前最好准确率是多少。
 
         self.best_acc = acc
         # 更新历史最好准确率。
@@ -803,48 +851,36 @@ class Trainer(object):
         # 更新历史最好准确率对应的 epoch。
 
     def load_model(self, path=None):
-        """
-        加载之前保存的模型。这里不会检查精度类型。
-        """
-        # load_model(...) 用来从磁盘加载之前保存的权重。
+        # load_model(...) 用来从磁盘加载之前保存的权重。这里不会检查精度类型。
         #
         # 参数含义：
         # - path：可选参数。
         #   如果传了 path，就加载指定路径的模型文件；
         #   如果没有传，就尝试根据 self.best_epoch / self.best_acc 拼出默认路径。
         #
-        # 注意：
-        # 这个函数当前代码里没有在 main.py 中直接调用。
-        # 它是一个工具函数，方便以后恢复训练或测试已有权重。
+        # 注意：这个函数当前代码里没有在 main.py 中直接调用。
+        #      它是一个工具函数，方便以后恢复训练或测试已有权重。
 
-        if path is not None:
-            # 如果用户显式传入了路径，就直接使用这个路径。
-
+        if path is not None:# 如果用户显式传入了路径，就直接使用这个路径。
             checkpoint_name = path
-        elif self.fp16_mode:
-            # 如果没有传 path，并且当前是 FP16 模式，
+        elif self.fp16_mode: # 如果没有传 path，并且当前是 FP16 模式，
             # 就尝试去 weights/<model_name>_fp16/ 目录里找最好模型。
-
             checkpoint_name = os.path.join(
                 'weights', self.model_name + '_fp16',
                 'weights.%03d.%.03f.pt' % (self.best_epoch, self.best_acc))
-        else:
-            # 普通 FP32 模式下，理论上应该去 weights/<model_name>/ 目录找。
-            #
-            # 但这里原代码写的是 self.model_name + '_fp16'，
-            # 也就是说它仍然会去 *_fp16 目录找。
+        else: # 普通 FP32 模式下，
+            # 理论上应该去 weights/<model_name>/ 目录找
+            # 但这里原代码写的是 self.model_name + '_fp16'，也就是说它仍然会去 *_fp16 目录找。
             # 这很可能是原代码里的一个小 bug。
-            # 因为当前主训练流程没有调用 load_model()，所以不影响 main.py 训练。
+            # 但因为当前主训练流程没有调用 load_model()，所以不影响 main.py 训练。
 
             checkpoint_name = os.path.join(
                 'weights', self.model_name + '_fp16',
                 'weights.%03d.%.03f.pt' % (self.best_epoch, self.best_acc))
-        if not os.path.exists(checkpoint_name):
-            # 如果目标权重文件不存在，就打印提示并返回。
-
+            
+        if not os.path.exists(checkpoint_name): # 如果目标权重文件不存在，就打印提示并返回。
             print("Best model not found")
-            # return 表示提前结束函数。
-            return
+            return # return 表示提前结束函数。
 
         checkpoint = torch.load(checkpoint_name)
         # torch.load(...) 从 .pt 文件里读取保存的数据。
@@ -852,9 +888,7 @@ class Trainer(object):
 
         self.model.load_state_dict(checkpoint['net'])
         # load_state_dict(...) 把 checkpoint['net'] 里的参数加载进当前模型。
-        #
-        # checkpoint['net'] 对应 save_model() 里的：
-        # 'net': model.state_dict()
+        # - checkpoint['net'] 对应 save_model() 里的：'net': model.state_dict()
 
         self.best_acc = checkpoint['acc']
         # 恢复保存时的最好准确率。
@@ -865,7 +899,7 @@ class Trainer(object):
         print("Loaded Model with accuracy: %.3f%%, from epoch: %d" %
               (checkpoint['acc'], checkpoint['epoch'] + 1))
         # 打印加载结果。
-        # checkpoint['epoch'] 是从 0 开始计数，所以显示给人看时加 1。
+        # - checkpoint['epoch'] 是从 0 开始计数，所以显示给人看时加 1。
 
     def train_and_evaluate(self, traindataloader, testdataloader, no_of_steps):
         # train_and_evaluate(...) 是整个训练流程的外层循环。

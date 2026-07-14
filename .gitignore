@@ -16,8 +16,10 @@ exp1/models/__pycache__/
 exp1/data/*
 !exp1/data/.gitkeep
 
-# Model checkpoints / trained weights
-exp1/weights/
+# 目的：忽略 exp1/weights 目录下训练生成的模型权重，除了 .gitkeep 文件。
+# .gitkeep 文件的作用：一个空的占位文件，用于确保 Git 能够跟踪空目录。
+exp1/weights/*
+!exp1/weights/.gitkeep
 *.pt
 
 # Local/private training documents

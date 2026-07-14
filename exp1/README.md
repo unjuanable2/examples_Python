@@ -1,7 +1,7 @@
 - [exp1：CIFAR-10 图像分类训练实验](#exp1cifar-10-图像分类训练实验)
   - [整体过程](#整体过程)
     - [其它文件/文件夹在实验里的作用](#其它文件文件夹在实验里的作用)
-  - [训练结果](#训练结果)
+  - [结果 和 分析](#结果-和-分析)
   - [Questions](#questions)
 
 
@@ -90,7 +90,7 @@
         - 累计测试 loss 到 `test_loss`、累计测试样本数量到 `total`、累计预测正确的测试样本数量到 `correct`, 并用 `utils.py` 的 `progress_bar()` 打印进度条
           - `outputs.max(1)` 取 logits 最大的类别作为预测类别；
     - 计算当前 epoch 测试准确率 `acc`, 如果超过历史最好值 `self.best_acc`，就调用 `save_model()` 保存权重。
-      - `./weights/` 是训练结果保存位置。
+      - `./weights/` 是训练结果保存位置
         - 普通训练会保存到 `./weights/<model_name>/weights.<epoch>.<acc>.pt`；
         - FP16 训练会保存到 `./weights/<model_name>_fp16/`；
         - `.pt` 文件里保存了三项：`net` 模型参数、`acc` 准确率、`epoch` 轮数。
@@ -101,13 +101,66 @@
 
 
 ### 其它文件/文件夹在实验里的作用
-- `./data` 
+- `./data`: 保存下载下来的 CIFAR-10 数据集
+- `./results_analysis/analyze_exp1_log.py`：日志分析脚本，负责从训练日志生成 CSV 和曲线图
 
-## 训练结果
-terminal 输出见 `run_exp1_out.txt`
-总运行时长 about 2h
-GPU temperature ~= (正常模式)86C - (性能模式)76C - 79C
 
+## 结果 和 分析
+- 硬件：拯救者 r9000p ( NVIDIA RTX 3060 GPU )
+  操作系统 Ubuntu 22.04 
+  总运行时长 about 2h 
+  运行时 GPU temperature ~= (正常模式)86C - (性能模式)76C - 79C
+- 运行 `run_exp1.sh` 后，脚本会自动把完整 terminal 输出日志放到  `./results_analysis/run_exp1_out.txt`: 
+  - 里面经常会看到类似下面这种进度条输出, 表示“当前这个 epoch 里，训练集/测试集已经处理到哪里了，以及目前统计到的 loss 和 accuracy”
+    ```bash
+    [================================================================>]  Step: 496ms | Tot: 28s989ms | Loss: 2.319 | Acc: 13.536% (6768/50000) 391/391
+    ```
+    - `Step: 496ms`：这一次更新进度条距离上一次更新进度条花了多久。
+      - 可以粗略理解成“最近一个 batch 用了多久”；
+      - 但它也包含打印进度条、数据读取等额外开销，不一定只等于模型计算时间。
+    - `Tot: 28s989ms`：从当前 训练 or 测试 阶段开始到现在，总共花了多久。
+      > e.g. 训练阶段开始后，到当前 batch 一共用了约 28.989 秒。
+    - `Loss: 2.319`：到目前为止的平均 loss。
+      - 在 `train.py` 里是累计 `train_loss` 后除以已经处理的 batch 数；
+      - loss 越小，通常说明模型预测和真实标签越接近；
+      - 但单独看某一行 loss 意义不大，更重要的是看多个 epoch 中 loss 是否整体下降。
+    - `Acc: 13.536% (6768/50000)`：到目前为止的累计准确率。
+      - `6768` 表示目前预测正确的样本数；
+      - `50000` 表示目前已经统计到的样本总数。这是训练阶段，分母最后会到 CIFAR-10 训练集大小 `50000`；
+        - 如果这是测试阶段，分母最后会到 CIFAR-10 测试集大小 `10000`。
+    - `391/391`：当前 batch 编号 / 总 batch 数。
+      - 训练集有 `50000` 张图，`batch_size=128`，所以大约是 `50000 / 128 = 390.625`，向上取整就是 `391` 个 batch；
+        - 所以 `391/391` 表示训练集这一轮已经跑到最后一个 batch；
+      - 测试集有 `10000` 张图，`batch_size=128`，所以测试阶段通常会看到 `79/79`。
+    - 这行里面里还会看到很多类似 `\b\b\b` 的奇怪字符（终端控制字符 `\b`），意思是“光标往左退一格”。
+      - `utils.py` 里的 `progress_bar()` 用它来在终端同一行上刷新进度条。
+      - 真实 terminal 会执行这些退格动作，所以你看到的是一条动态刷新的进度条；
+      - 但是输出被保存到 txt 文件后，txt 不会执行退格动作，只会把这些控制字符原样保存下来，所以看起来像乱码。因此, 可以忽略这些 `\b\b\b`，重点看 `Step / Tot / Loss / Acc / 391/391` 这些字段。
+- 运行 `run_exp1.sh` 的同时，脚本会自动从 `./results_analysis/run_exp1_out.txt` 里提取每个 epoch 的结果，并生成：
+  - `./results_analysis/exp1_epoch_metrics.csv`：每个 epoch 一行的训练记录，主要列含义：
+    - `epoch`：第几个 epoch，一共解析出 `200` 个 epoch
+    - `learning_rate`：这一轮使用的学习率
+    - `train_loss`：这一轮训练集上的平均 loss
+    - `train_acc`：这一轮训练集上的准确率 = 训练精度
+      - `train_correct / train_samples`：训练集中预测正确的样本数 / 训练样本总数
+    - `test_loss`：这一轮测试集上的 loss
+    - `test_acc`：这一轮测试集上的准确率，更能反映模型对没见过数据的泛化能力
+      - `test_correct / test_samples`：测试集中预测正确的样本数 / 测试样本总数
+      - 如果 `train_acc` 很高，但 `test_acc` 明显低很多，说明模型可能在训练集上记得很好，但泛化能力有限。
+        - 模型只在 `train()` 里用训练集做 `loss.backward()` 和 `optimizer.step()`，也就是只根据训练集更新参数；
+        - 测试集只在 `evaluate()` 里用来算准确率，不会执行反向传播，也不会更新参数。
+  - `./results_analysis/exp1_accuracy_curve.png` / `./results_analysis/exp1_accuracy_curve.svg`：每张图都有 训练精度 = 训练准确率 `train accuracy` 曲线、测试准确率 `test accuracy` 曲线；
+    <img src="results_analysis/exp1_accuracy_curve.svg" alt="exp1 accuracy curve" width="70%">
+
+    - 训练后期 `train accuracy` 接近 100%，而 `test accuracy` 稳定在 91% 左右，说明模型已经基本把训练集学得很熟，但测试集还有约 8% 到 9% 的错误
+      - 最佳训练准确率 = `99.786%`，出现在 epoch `164`
+      - 最佳测试准确率 = `91.640%`，出现在 epoch `138`
+      - 最后一个 epoch：`train_acc = 99.744%`，`test_acc = 91.530%`
+  - `results_analysis/exp1_loss_curve.png` / `results_analysis/exp1_loss_curve.svg`：每张图都有 训练 loss 曲线、测试 loss 曲线。这张图用来观察 loss 是否整体下降。
+    <img src="results_analysis/exp1_loss_curve.svg" alt="exp1 loss curve" width="70%">
+
+    - 如果 Python 环境里有 `matplotlib`，会生成 `.png`；如果没有，会自动生成 `.svg`。
+ 
 
 ## Questions
 `data.py`

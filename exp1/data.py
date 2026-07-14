@@ -113,15 +113,15 @@ trainset = datasets.CIFAR10( root='./data', train=True, download=True, transform
 
 # datasets.CIFAR10(...) 表示创建一个 CIFAR10 数据集对象。
 # 这里的 root、train、download、transform 都是关键字参数：
-# - root='./data'：CIFAR-10 数据集保存/读取的根目录；
-# - train=True：读取训练集部分；
+# - root='./data'：CIFAR-10 数据集保存/读取的根目录
+# - train=True：读取的是 CIFAR-10 官方训练集，大小是 50000 张；
 # - download=True：如果 root 下面没有数据，就尝试自动下载；
 # - transform=train_transforms：每次取出训练图片时，应用上面定义的训练预处理流程。
 
 testset = datasets.CIFAR10( root='./data', train=False, download=True, transform=test_transforms)
 # testset 是变量，保存 CIFAR-10 测试集对象。
 
-# - train=False 表示读取测试集部分。
+# - train=False：读取的是 CIFAR-10 官方测试集，大小是 10000 张。
 # - transform=test_transforms 表示测试图片只做 ToTensor 和 Normalize。
 
 ###################################################
@@ -150,6 +150,10 @@ trainloader = torch.utils.data.DataLoader( trainset,
 # 其中 inputs 就是一批图片，targets 就是一批标签。
 
 testloader = torch.utils.data.DataLoader( testset, 
-    batch_size = 128, shuffle=True, num_workers=4 )
+    batch_size = 128, shuffle=False, num_workers=4 )
 # testloader 是变量，保存测试集的 DataLoader 对象。
 # 它每次从 testset 里取 128 张测试图片和标签。
+# shuffle=False 表示测试时不打乱测试集顺序。
+# - 测试集只用来评估，不参与训练；
+# - 是否打乱通常不会改变最终准确率；
+# - 但固定顺序更方便复现和对比日志，所以测试集一般设成 False。
