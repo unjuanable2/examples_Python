@@ -672,9 +672,9 @@ class Trainer(object):
                 # 把更新后的权重复制回 FP16 模型权重。
                 self.master_params_to_model_params(self.model_params, self.master_params)
                 # 这样下一次 forward 时，FP16 模型用的就是更新后的参数。
-            else:
+            else: # 普通 FP32 模式下，优化器直接更新 self.model.parameters()
                 self.optimizer.step()
-                # 普通 FP32 模式下，优化器直接更新 self.model.parameters()。
+                
 
             ############################ 统计训练 loss 和准确率 ########################
             train_loss += loss.item()
