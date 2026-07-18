@@ -1,16 +1,16 @@
 - [exp1：CIFAR-10 图像分类训练实验](#exp1cifar-10-图像分类训练实验)
   - [整体过程](#整体过程)
     - [其它文件/文件夹在实验里的作用](#其它文件文件夹在实验里的作用)
+    - [fp16的原理补充](#fp16的原理补充)
   - [结果 和 分析](#结果-和-分析)
   - [Questions](#questions)
 
 
 # exp1：CIFAR-10 图像分类训练实验
+（Pytorch使用入门）
+这个实验的主任务是用 PyTorch 在 CIFAR-10 上训练一个图像分类模型。CIFAR-10 每张图像是 `32x32` 的 RGB 图片，标签一共有 10 类：飞机、汽车、鸟、猫、鹿、狗、青蛙、马、船、卡车。
 
 ## 整体过程
-（Pytorch使用入门）
-
-这个实验的主任务是用 PyTorch 在 CIFAR-10 上训练一个图像分类模型。CIFAR-10 每张图像是 `32x32` 的 RGB 图片，标签一共有 10 类：飞机、汽车、鸟、猫、鹿、狗、青蛙、马、船、卡车。
 
 训练流程可以按代码执行顺序理解：
 
@@ -30,12 +30,23 @@
   - 当命令行参数是 `--model resnet18` 时，实际会调用 `models/resnet.py` 里的 `ResNet18()`: 构造的是 `ResNet(BasicBlock, [2, 2, 2, 2])`，最后的全连接层输出 10 个值，对应 CIFAR-10 的 10 个类别。  
 - `main.py` 把创建出的模型（模型名称、模型对象、模型学习率、学习率、是否使用 GPU、是否使用 FP16、是否使用 loss scaling）交给 `train.py` 里的 `Trainer` 类，得到 `Trainer` 类训练器对象 `trainer`。
   - `Trainer.__init__()` 保存模型、学习率、是否使用 GPU/FP16 等配置；
-    - 初始化 对象属性 为 用户传进来的参数
+    - 初始化 对象属性 为 用户传进来的参数: 保存模型名、模型、学习率以及 GPU/FP16/loss scaling 配置
     - 如果启用 GPU，会执行 `model.cuda()` 把模型移动到 GPU 显存上
-    - 优化器使用 `optim.SGD(model.parameters(), lr, momentum=0.9, weight_decay=5e-4)`；
-      - `momentum=0.9` 可以让参数更新带有“惯性”，通常收敛更稳；
-      - `weight_decay=5e-4` 是 L2 正则化，用来抑制权重过大，减少过拟合；
-    - 学习率调度器是 `MultiStepLR`，到 `[10, 20, 50, 100, 180]` 这些 epoch 时把学习率乘以 0.1
+    - 如果最终启用了 FP16 模式，
+      - `network_to_half()`：
+        - 在网络最前面加入 `tofp16` 输入转换层, 把输入张量转成 FP16
+          - `tofp16.forward()`：一个嵌套的辅助网络层，负责在前向传播入口调用 `input.half()`，把输入张量转换为 FP16。
+        - 先把网络整体/整个模型转为 FP16，再让 BatchNorm 转回 FP32
+          - `BN_convert_float()`：递归查找网络中的 BatchNorm 层并转回 FP32，避免均值、方差等统计计算因 FP16 精度不足而不稳定。
+      - `prep_param_list()`：会准备两套参数：
+        - `self.model_params`：模型里真正用于 forward/backward 的 FP16 参数, 负责前向、反向计算
+        - `self.master_params`：和上面参数数值对应的一份 FP32 拷贝。FP32 主参数交给优化器更新，以免较小的权重更新在 FP16 中被舍入掉。
+    - 声明 SDG 优化器（决定参数怎么更新） 
+      - FP16 模式下，优化器 `self.optimizer = optim.SGD(self.master_params, self.lr, momentum=0.9, weight_decay=5e-4)` 不直接更新 `self.model_params`, 更新的是 FP32 主参数 `self.master_params` 
+        - `momentum=0.9` 可以让参数更新带有“惯性”，通常收敛更稳；
+        - `weight_decay=5e-4` 是 L2 正则化，用来抑制权重过大，减少过拟合；
+      - 普通 FP32 模式下，优化器直接更新 `self.model.parameters()``optim.SGD(model.parameters(), lr, momentum=0.9, weight_decay=5e-4)`；
+    - 创建学习率调度器 `MultiStepLR`，到 `[10, 20, 50, 100, 180]` 这些 epoch 时把学习率乘以 0.1
 - `main.py` 导入 `data.py` 中的两个数据加载器对象 `trainloader`、`testloader`，完成数据准备。`data.py` 具体涉及：
   - 定义训练集和测试集的预处理流程：
     - 训练集使用 `train_transforms` (一种训练预处理流程)：
@@ -59,7 +70,7 @@
     - `self.model.train()` 切换到训练模式，e.g. 启用 BatchNorm/Dropout 的训练行为
     - 设置 `train_loss` (累计训练 loss), `correct` (累计预测正确的样本数), `total` (累计已经处理过的样本数) 为 0
     - 设置当前 epoch 的学习率：
-      - 前 5 个 epoch (从0开始计数) 使用 warmup，让学习率从较小值逐步升到设定的初始学习率，避免一开始步子太大导致训练不稳定；
+      - 前 5 个 epoch (从0开始计数) 使用 `warmup_learning_rate()`，让学习率从较小值逐步升到设定的初始学习率，避免一开始步子太大导致训练不稳定；
       - 第 5 个 epoch：恢复到初始学习率；
       - 第 5 个 epoch 之后：每个 epoch 末尾调用 `self.scheduler.step();` :当 scheduler 走到 milestones=[10, 20, 50, 100, 180] 时，学习率会乘以 gamma=0.1
     - 定义损失函数 `nn.CrossEntropyLoss()`。
@@ -70,8 +81,14 @@
         - 清空上一轮 batch 留下的梯度
       - `outputs = self.model(inputs)` 前向传播，得到 10 类 logits；
       - `loss = criterion(outputs, targets)` 根据模型预测结果 outputs vs 真实训练标签 targets，计算分类损失；
+        - 开启 `--loss_scaling`，将 loss 乘以 128。根据链式法则，梯度也随之放大 128 倍，从而减少小梯度在 FP16 中下溢为 0 的情况。
       - `loss.backward()` 反向传播，根据 loss 计算模型每个参数的梯度
-      - `optimizer.step()` 根据梯度更新模型参数；
+      - `optimizer.step()` 根据梯度
+        - FP16 模式下
+          - self.`model_grads_to_master_grads()`：把 FP16 模型参数在反向传播中得到的梯度复制给 FP32 主参数，使优化器能够用这些梯度更新主参数。
+          - 用 FP32 执行权重更新
+          - self.`master_params_to_model_params()`：在优化器更新 FP32 主参数后，将新数值复制回 FP16 模型参数，供下一个 batch 前向传播使用。
+        - 普通 FP32 模式下，优化器直接更新 `self.model.parameters()`
       - 统计训练 loss `train_loss` 和 accuracy ( 根据 `total`, `correct`) ，并用 `utils.py` 的 `progress_bar()` 打印进度条。
         - 关于 `utils.py`：详情见注释
           - `progress_bar()`: 这个函数用到了 `format_time(seconds)`
@@ -89,11 +106,13 @@
           - 不更新参数
         - 累计测试 loss 到 `test_loss`、累计测试样本数量到 `total`、累计预测正确的测试样本数量到 `correct`, 并用 `utils.py` 的 `progress_bar()` 打印进度条
           - `outputs.max(1)` 取 logits 最大的类别作为预测类别；
-    - 计算当前 epoch 测试准确率 `acc`, 如果超过历史最好值 `self.best_acc`，就调用 `save_model()` 保存权重。
+    - 计算当前 epoch 测试准确率 `acc`, 如果超过历史最好值 `self.best_acc`，就调用 `save_model()`:
+      - 保存模型对象、模型名字、当前模型在测试集上的准确率、当前 epoch 编号 
       - `./weights/` 是训练结果保存位置
-        - 普通训练会保存到 `./weights/<model_name>/weights.<epoch>.<acc>.pt`；
+        - 普通 FP32 训练会保存到 `./weights/<model_name>/weights.<epoch>.<acc>.pt`；
         - FP16 训练会保存到 `./weights/<model_name>_fp16/`；
         - `.pt` 文件里保存了三项：`net` 模型参数、`acc` 准确率、`epoch` 轮数。
+      - 更新历史最好准确率、历史最好准确率对应的 epoch
 
 
 把这些步骤压缩成一句话就是：`main.py` 读参数，`data.py` 准备 CIFAR-10 batch，
@@ -102,15 +121,38 @@
 
 ### 其它文件/文件夹在实验里的作用
 - `./data`: 保存下载下来的 CIFAR-10 数据集
-- `./results_analysis/analyze_exp1_log.py`：日志分析脚本，负责从训练日志生成 CSV 和曲线图
+- `./results_analysis_exp1/analyze_exp1_log.py`：日志分析脚本，负责从训练日志生成 CSV 和曲线图
+- `train.py`：封装模型从初始化到训练、测试、保存/加载权重的完整流程，并实现本实验使用的手工 FP16 混合精度训练。核心是 `Trainer` 类，各子函数功能包含在上述整体流程中, 除了
+  - `load_model()`：从指定路径或默认路径读取 checkpoint，恢复模型参数、最好准确率和对应 epoch；
+    - 当前主训练流程未调用该函数。
 
+### fp16的原理补充
+
+FP16（IEEE 754 binary16，半精度浮点数）使用 **16 bit** 表示一个浮点数，其结构为：1 bit 符号位、5 bit 指数位、10 bit 尾数位。对普通规格化数，可写成$(-1)^s \times (1.f)_2 \times 2^{E-15}, $ 其中 $s$ 是符号位，$E$ 是指数域，15 是指数偏置，$f$ 是尾数的小数部分。由于规格化数有一个不实际存储的最高位 1，FP16 的有效精度为 11 个二进制位，约等于 3～4 位十进制有效数字。其最大有限值为 65504，最小正规格化正数约为 $6.10\times10^{-5}$，借助非规格化数还能表示到约 $5.96\times10^{-8}$。相比之下，FP32 使用 1+8+23 bit，约有 7 位十进制有效数字，表示范围也大得多。
+
+FP16 的优点是每个数只占 FP32 一半的存储空间，因此可以降低模型参数、激活值和显存带宽开销。支持半精度计算的 GPU 还可以用 Tensor Core 等硬件提高矩阵乘法和卷积速度。但 FP16 的指数范围和有效位数较少，会带来两个主要问题：
+
+- **下溢**：反向传播中的小梯度可能小于 FP16 可表示范围而变为 0，参数因此得不到更新。
+- **舍入或溢出**：很小的参数更新加到较大的 FP16 权重上可能被舍入掉；数值过大时则可能变成 `inf`，并进一步产生 `NaN`。
+
+因此，本实验的 `train.py` 采用手工混合精度训练，而不是简单地让所有数据都使用 FP16。具体数据流为：
+
+1. `network_to_half()` 将大部分网络参数和输入转为 FP16，用它们完成前向传播与反向传播；BatchNorm 保留 FP32，以提高统计量计算的稳定性，交叉熵损失也用 FP32 计算。
+2. `prep_param_list()` 为参与计算的模型参数保留一份 FP32 主参数。FP16 模型参数用于快速计算，FP32 主参数由 SGD 真正更新，避免微小更新被 FP16 舍入掉。
+3. 若开启 `--loss_scaling`，反向传播前先将 loss 乘以 128。根据链式法则，梯度也随之放大 128 倍，从而减少小梯度在 FP16 中下溢为 0 的情况。
+4. `loss.backward()` 后，`model_grads_to_master_grads()` 把模型梯度复制到 FP32 主参数；若做过 loss scaling，再将主参数梯度除以 128，恢复其真实尺度。
+5. SGD 更新 FP32 主参数，随后 `master_params_to_model_params()` 把更新结果复制回 FP16 模型参数，供下一个 batch 使用。
+
+可将这一过程概括为：**FP16 负责主要计算和节省存储，FP32 负责对精度敏感的统计与权重更新，loss scaling 负责保护微小梯度。** 这三者配合，在尽量保持模型精度和训练稳定性的同时获得半精度训练的速度与显存优势。
+
+需要注意，本代码使用固定缩放因子 128；现代自动混合精度通常会动态调整缩放因子，在检测到梯度溢出时跳过更新并减小缩放值，因此鲁棒性更好。
 
 ## 结果 和 分析
 - 硬件：拯救者 r9000p ( NVIDIA RTX 3060 GPU )
   操作系统 Ubuntu 22.04 
   总运行时长 about 2h 
   运行时 GPU temperature ~= (正常模式)86C - (性能模式)76C - 79C
-- 运行 `run_exp1.sh` 后，脚本会自动把完整 terminal 输出日志放到  `./results_analysis/run_exp1_out.txt`: 
+- 运行 `run_exp1.sh` 后，脚本会自动把完整 terminal 输出日志放到  `./results_analysis_exp1/run_exp1_out.txt`: 
   - 里面经常会看到类似下面这种进度条输出, 表示“当前这个 epoch 里，训练集/测试集已经处理到哪里了，以及目前统计到的 loss 和 accuracy”
     ```bash
     [================================================================>]  Step: 496ms | Tot: 28s989ms | Loss: 2.319 | Acc: 13.536% (6768/50000) 391/391
@@ -136,8 +178,8 @@
       - `utils.py` 里的 `progress_bar()` 用它来在终端同一行上刷新进度条。
       - 真实 terminal 会执行这些退格动作，所以你看到的是一条动态刷新的进度条；
       - 但是输出被保存到 txt 文件后，txt 不会执行退格动作，只会把这些控制字符原样保存下来，所以看起来像乱码。因此, 可以忽略这些 `\b\b\b`，重点看 `Step / Tot / Loss / Acc / 391/391` 这些字段。
-- 运行 `run_exp1.sh` 的同时，脚本会自动从 `./results_analysis/run_exp1_out.txt` 里提取每个 epoch 的结果，并生成：
-  - `./results_analysis/exp1_epoch_metrics.csv`：每个 epoch 一行的训练记录，主要列含义：
+- 运行 `run_exp1.sh` 的同时，脚本会自动从 `./results_analysis_exp1/run_exp1_out.txt` 里提取每个 epoch 的结果，并生成：
+  - `./results_analysis_exp1/exp1_epoch_metrics.csv`：每个 epoch 一行的训练记录，主要列含义：
     - `epoch`：第几个 epoch，一共解析出 `200` 个 epoch
     - `learning_rate`：这一轮使用的学习率
     - `train_loss`：这一轮训练集上的平均 loss
@@ -149,15 +191,15 @@
       - 如果 `train_acc` 很高，但 `test_acc` 明显低很多，说明模型可能在训练集上记得很好，但泛化能力有限。
         - 模型只在 `train()` 里用训练集做 `loss.backward()` 和 `optimizer.step()`，也就是只根据训练集更新参数；
         - 测试集只在 `evaluate()` 里用来算准确率，不会执行反向传播，也不会更新参数。
-  - `./results_analysis/exp1_accuracy_curve.png` / `./results_analysis/exp1_accuracy_curve.svg`：每张图都有 训练精度 = 训练准确率 `train accuracy` 曲线、测试准确率 `test accuracy` 曲线；
-    <img src="results_analysis/exp1_accuracy_curve.svg" alt="exp1 accuracy curve" width="70%">
+  - `./results_analysis_exp1/exp1_accuracy_curve.png` / `./results_analysis_exp1/exp1_accuracy_curve.svg`：每张图都有 训练精度 = 训练准确率 `train accuracy` 曲线、测试准确率 `test accuracy` 曲线；
+    <img src="results_analysis_exp1/exp1_accuracy_curve.svg" alt="exp1 accuracy curve" width="70%">
 
     - 训练后期 `train accuracy` 接近 100%，而 `test accuracy` 稳定在 91% 左右，说明模型已经基本把训练集学得很熟，但测试集还有约 8% 到 9% 的错误
       - 最佳训练准确率 = `99.786%`，出现在 epoch `164`
       - 最佳测试准确率 = `91.640%`，出现在 epoch `138`
       - 最后一个 epoch：`train_acc = 99.744%`，`test_acc = 91.530%`
-  - `results_analysis/exp1_loss_curve.png` / `results_analysis/exp1_loss_curve.svg`：每张图都有 训练 loss 曲线、测试 loss 曲线。这张图用来观察 loss 是否整体下降。
-    <img src="results_analysis/exp1_loss_curve.svg" alt="exp1 loss curve" width="70%">
+  - `results_analysis_exp1/exp1_loss_curve.png` / `results_analysis_exp1/exp1_loss_curve.svg`：每张图都有 训练 loss 曲线、测试 loss 曲线。这张图用来观察 loss 是否整体下降。
+    <img src="results_analysis_exp1/exp1_loss_curve.svg" alt="exp1 loss curve" width="70%">
 
     - 如果 Python 环境里有 `matplotlib`，会生成 `.png`；如果没有，会自动生成 `.svg`。
  

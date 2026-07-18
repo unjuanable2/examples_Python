@@ -1,11 +1,11 @@
-- [exp2：TensorRT / INT8 推理实验](#exp2tensorrt--int8-推理实验)
+- [exp3：TensorRT / INT8 推理实验](#exp3tensorrt--int8-推理实验)
   - [整体过程](#整体过程)
     - [其它文件/文件夹在实验里的作用](#其它文件文件夹在实验里的作用)
   - [推理结果](#推理结果)
   - [Questions](#questions)
 
 
-# exp2：TensorRT / INT8 推理实验
+# exp3：TensorRT / INT8 推理实验
 
 ## 整体过程
 （模型部署 / 推理加速入门）
@@ -22,7 +22,7 @@
   ```
 - 解析完命令行参数后，`int8_infer.py` 通过 `model_factory(model_name)` 创建模型对象。
   - 这里的 `model_factory` 来自 `models`。
-  - 也就是说，`exp2` 的推理脚本需要能找到 `exp1/models/` 里的模型定义。
+  - 也就是说，`exp3` 的推理脚本需要能找到 `exp1+2/models/` 里的模型定义。
   - 当命令行参数是 `--model alexnet` 时，代码会创建 AlexNet 结构的模型对象。
 - 如果传入了 `--gpu`，并且当前机器能使用 CUDA，代码会做几件事：
   - `torch.backends.cudnn.enabled = True`：启用 CuDNN，让 PyTorch 可以调用 NVIDIA 对卷积等操作做过优化的底层库；

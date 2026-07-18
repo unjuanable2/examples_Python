@@ -7,7 +7,7 @@ set -u
 # 这样可以避免因为变量名拼错导致脚本继续乱跑。
 
 ##############################################################################
-# 这个脚本用于从 exp1 目录启动训练，并把终端输出保存到 results_analysis/ 文件夹 #
+# 这个脚本用于从 exp1 目录启动训练，并把终端输出保存到 results_analysis_exp1/ 文件夹 #
 ##############################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,13 +33,13 @@ VENV_PATH="${VENV_PATH:-$HOME/pyenv}"
 # 如果你的虚拟环境不叫 ~/pyenv，可以这样临时指定：
 #   VENV_PATH=/home/jianing/torch-env ./run_exp1.sh
 
-RESULTS_DIR="$SCRIPT_DIR/results_analysis"
+RESULTS_DIR="$SCRIPT_DIR/results_analysis_exp1"
 # RESULTS_DIR 是结果文件夹路径。
 # 训练日志、CSV 表格、曲线图都会集中保存到这个文件夹里。
 
 OUT_FILE="$RESULTS_DIR/run_exp1_out.txt"
 # OUT_FILE 是输出日志文件路径。
-# 这里表示把日志保存到 exp1/results_analysis/run_exp1_out.txt。
+# 这里表示把日志保存到 exp1/results_analysis_exp1/run_exp1_out.txt。
 
 cd "$SCRIPT_DIR"
 # cd 到脚本所在目录，也就是 exp1。
@@ -51,7 +51,7 @@ cd "$SCRIPT_DIR"
 mkdir -p "$RESULTS_DIR"
 # mkdir 是创建文件夹的命令。
 # -p 表示：
-# - 如果 results_analysis 不存在，就创建；
+# - 如果 results_analysis_exp1 不存在，就创建；
 # - 如果已经存在，也不要报错。
 #
 # 这一步要放在 tee 写日志之前，
@@ -119,18 +119,18 @@ CMD=(
 "${CMD[@]}" 2>&1 | tee "$OUT_FILE"
 # 2>&1：
 #   把错误输出 stderr 合并到普通输出 stdout。
-#   这样无论是正常打印，还是报错信息，都会一起保存到 results_analysis/run_exp1_out.txt。
+#   这样无论是正常打印，还是报错信息，都会一起保存到 results_analysis_exp1/run_exp1_out.txt。
 
 # | tee "$OUT_FILE"：
 # - | 是管道，把左边命令的输出交给右边命令。
 # - tee 会做两件事：
 #   - 把输出继续显示在终端上
-#   - 同时把输出写入 results_analysis/run_exp1_out.txt
+#   - 同时把输出写入 results_analysis_exp1/run_exp1_out.txt
 
 TRAIN_STATUS=${PIPESTATUS[0]}
 # PIPESTATUS 是 bash 提供的数组变量。
 # 上面那一行实际是：
-#   python main.py ... | tee results_analysis/run_exp1_out.txt
+#   python main.py ... | tee results_analysis_exp1/run_exp1_out.txt
 #
 # 这是一条“管道命令”，有两个程序：
 # - 左边：python main.py ...
@@ -144,7 +144,7 @@ TRAIN_STATUS=${PIPESTATUS[0]}
 # 避免后面运行别的命令后 PIPESTATUS 被覆盖。
 
 ########################################################
-# 训练结束后，自动从 results_analysis/run_exp1_out.txt 提取每个 epoch 的结果 #
+# 训练结束后，自动从 results_analysis_exp1/run_exp1_out.txt 提取每个 epoch 的结果 #
 ########################################################
 
 echo "Analyzing training log..."
@@ -152,16 +152,16 @@ echo "Analyzing training log..."
 
 python "$RESULTS_DIR/analyze_exp1_log.py"
 # 运行日志分析脚本。
-# 这个脚本本身也放在 results_analysis/ 里。
+# 这个脚本本身也放在 results_analysis_exp1/ 里。
 #
-# 它会读取 results_analysis/run_exp1_out.txt，并生成：
-# - results_analysis/exp1_epoch_metrics.csv：每个 epoch 一行，记录 train/test loss 和 accuracy；
-# - results_analysis/exp1_accuracy_curve.png：训练准确率和测试准确率曲线；
-# - results_analysis/exp1_loss_curve.png：训练 loss 和测试 loss 曲线。
+# 它会读取 results_analysis_exp1/run_exp1_out.txt，并生成：
+# - results_analysis_exp1/exp1_epoch_metrics.csv：每个 epoch 一行，记录 train/test loss 和 accuracy；
+# - results_analysis_exp1/exp1_accuracy_curve.png：训练准确率和测试准确率曲线；
+# - results_analysis_exp1/exp1_loss_curve.png：训练 loss 和测试 loss 曲线。
 #
 # 如果当前 Python 环境没有安装 matplotlib，脚本会自动改成生成：
-# - results_analysis/exp1_accuracy_curve.svg
-# - results_analysis/exp1_loss_curve.svg
+# - results_analysis_exp1/exp1_accuracy_curve.svg
+# - results_analysis_exp1/exp1_loss_curve.svg
 #
 # SVG 也是图片格式，可以直接放在 README 里显示。
 #

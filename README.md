@@ -2,5 +2,7 @@
 
 - `./exp0/` 用最简单的线性模型练习 PyTorch 训练流程：准备输入数据和标签，定义模型，计算 loss，反向传播 backward，调用优化器 optimizer 更新参数。
   - 这个实验主要用来理解深度学习训练代码的基本结构。 
-- `./exp1/` CIFAR-10 图像分类训练实验: 用 PyTorch 在 CIFAR-10 数据集上训练 ResNet18 等 CNN 分类模型。代码包含数据读取和增强、模型选择、训练循环、测试集评估、学习率调整、FP16 混合精度训练、模型权重保存等完整训练流程。
-- `./exp2/` TensorRT / INT8 推理部署实验: 基于训练好的模型，尝试把 PyTorch 模型转换成 TensorRT 推理模型，并比较普通 PyTorch 推理和 TensorRT 推理的速度。实验里还包含 INT8 量化校准数据集，用来理解模型部署和推理加速。
+- `./exp1+2/` CIFAR-10 图像分类训练实验：共用一套 PyTorch 训练框架。
+  - exp1 使用 ResNet18 模型训练 200 个 epoch，说明和脚本分别为 `README_exp1.md` 和 `run_exp1.sh`, 结果保存在 `results_analysis_exp1/`
+  - exp2 实现并训练 AlexNet 200 个 epoch，说明和脚本分别为 `README_exp2.md` 和 `run_exp2.sh`, 结果保存在 `results_analysis_exp2/`
+- `./exp3/` TensorRT / INT8 推理部署实验：基于实验 2 训练好的 AlexNet，尝试把 PyTorch 模型转换成 TensorRT 推理模型，并比较 PyTorch FP32 与 TensorRT INT8 的推理速度和预测结果。
