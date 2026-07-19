@@ -156,7 +156,6 @@ FP16 的优点是每个数只占 FP32 一半的存储空间，因此可以降低
 ## 结果 和 分析
 - 硬件：拯救者 r9000p ( NVIDIA RTX 3060 GPU )
   操作系统 Ubuntu 22.04 
-  原有 FP32 单次训练记录总运行时长约 2h；新的 FP32＋FP16 对比总时长需要重新运行后，以两份 CSV 的 `epoch_time_seconds` 为准。
   运行时 GPU temperature ~= (正常模式)86C - (性能模式)76C - 79C
 - 运行 `run_exp.sh` 后，脚本会依次运行 FP32、FP16，并把完整 terminal 输出分别放到 `./results_analysis/run_exp1_out_fp32.txt`、`./results_analysis/run_exp1_out_fp16.txt`。
   - 每个 epoch 都会额外打印 `Epoch Time: ... seconds`。该时间在 CUDA 同步后统计，范围包含这一轮完整的训练和测试，因此可以用于 FP32/FP16 速度对比。
