@@ -18,7 +18,7 @@ RESULTS_DIR = Path(__file__).resolve().parent
 # 因为这个脚本本身放在 results_analysis/ 里，
 # 所以 RESULTS_DIR 就是 results_analysis/ 的绝对路径。
 #
-# 这样 exp1 根目录里只放代码和 README，
+# 这样 exp2 根目录里只放代码和 README，
 # 训练日志、CSV、曲线图等结果文件都集中放到这个文件夹里。
 
 LOG_FILE = RESULTS_DIR / "run_exp2_out.txt"
@@ -229,7 +229,7 @@ def write_figures(rows):
 
     plt.xlabel("epoch")
     plt.ylabel("accuracy (%)")
-    plt.title("Exp1 Accuracy Curve")
+    plt.title("Exp2 Accuracy Curve")
     plt.legend()
     plt.grid(True)
     plt.savefig(ACCURACY_FIG, dpi=150, bbox_inches="tight")
@@ -245,7 +245,7 @@ def write_figures(rows):
 
     plt.xlabel("epoch")
     plt.ylabel("loss")
-    plt.title("Exp1 Loss Curve")
+    plt.title("Exp2 Loss Curve")
     plt.legend()
     plt.grid(True)
     plt.savefig(LOSS_FIG, dpi=150, bbox_inches="tight")
@@ -360,7 +360,7 @@ def write_svg_figures(rows):
 
     _write_svg(
         ACCURACY_SVG,
-        "Exp1 Accuracy Curve",
+        "Exp2 Accuracy Curve",
         "accuracy (%)",
         epochs,
         [
@@ -371,7 +371,7 @@ def write_svg_figures(rows):
 
     _write_svg(
         LOSS_SVG,
-        "Exp1 Loss Curve",
+        "Exp2 Loss Curve",
         "loss",
         epochs,
         [

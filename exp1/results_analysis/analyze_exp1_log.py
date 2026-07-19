@@ -220,9 +220,10 @@ def write_csv(rows):
 
 
 def write_figures(rows):
-    # 根据 CSV 数据画两张图：
+    # 根据 CSV 数据画图：
     # - train/test accuracy 曲线；
-    # - train/test loss 曲线。
+    # - train/test loss 曲线；
+    # - 如果日志中包含 Epoch Time，再画 epoch 耗时曲线。
     #
     # 这个函数无论如何都会生成 SVG。
     # 如果当前环境安装了 matplotlib，还会额外生成 PNG。
@@ -247,7 +248,7 @@ def write_figures(rows):
     test_acc = [row["test_acc"] for row in rows]
     train_loss = [row["train_loss"] for row in rows]
     test_loss = [row["test_loss"] for row in rows]
-    epoch_times = [row["epoch_time_seconds"] for row in rows]
+    time_rows = [row for row in rows if row["epoch_time_seconds"] != ""]
 
     plt.figure()
     # 新建第一张图。
@@ -281,15 +282,20 @@ def write_figures(rows):
     plt.close()
     # 保存 loss 曲线并关闭图像。
 
-    plt.figure()
-    plt.plot(epochs, epoch_times, label="epoch time")
-    plt.xlabel("epoch")
-    plt.ylabel("time (seconds)")
-    plt.title(f"Exp1 Epoch Time ({PRECISION.upper()})")
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(TIME_FIG, dpi=150, bbox_inches="tight")
-    plt.close()
+    # 老版本日志可能没有记录 Epoch Time。只有存在耗时数据时才生成耗时图，
+    # 避免空字符串导致绘图失败，并保证 accuracy/loss 图片仍然正常生成。
+    if time_rows:
+        time_epochs = [row["epoch"] for row in time_rows]
+        epoch_times = [row["epoch_time_seconds"] for row in time_rows]
+        plt.figure()
+        plt.plot(time_epochs, epoch_times, label="epoch time")
+        plt.xlabel("epoch")
+        plt.ylabel("time (seconds)")
+        plt.title(f"Exp1 Epoch Time ({PRECISION.upper()})")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(TIME_FIG, dpi=150, bbox_inches="tight")
+        plt.close()
 
 
 def _scale_points(xs, ys, width, height, margin, y_min=None, y_max=None):
@@ -389,14 +395,13 @@ def _write_svg(path, title, y_label, epochs, series):
 
 
 def write_svg_figures(rows):
-    # 没有 matplotlib 时，用这个函数生成两张 SVG 曲线图。
+    # 没有 matplotlib 时，也能用纯 Python 生成 SVG 曲线图。
 
     epochs = [row["epoch"] for row in rows]
     train_acc = [row["train_acc"] for row in rows]
     test_acc = [row["test_acc"] for row in rows]
     train_loss = [row["train_loss"] for row in rows]
     test_loss = [row["test_loss"] for row in rows]
-    epoch_times = [row["epoch_time_seconds"] for row in rows]
 
     _write_svg(
         ACCURACY_SVG,
@@ -420,13 +425,17 @@ def write_svg_figures(rows):
         ],
     )
 
-    _write_svg(
-        TIME_SVG,
-        f"Exp1 Epoch Time ({PRECISION.upper()})",
-        "time (seconds)",
-        epochs,
-        [("epoch time", epoch_times, "#2ca02c")],
-    )
+    time_rows = [row for row in rows if row["epoch_time_seconds"] != ""]
+    if time_rows:
+        time_epochs = [row["epoch"] for row in time_rows]
+        epoch_times = [row["epoch_time_seconds"] for row in time_rows]
+        _write_svg(
+            TIME_SVG,
+            f"Exp1 Epoch Time ({PRECISION.upper()})",
+            "time (seconds)",
+            time_epochs,
+            [("epoch time", epoch_times, "#2ca02c")],
+        )
 
 
 def print_summary(rows):

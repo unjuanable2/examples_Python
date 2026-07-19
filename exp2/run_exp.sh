@@ -50,8 +50,9 @@ OUT_FILE="$RESULTS_DIR/run_exp2_out.txt"
 
 cd "$SCRIPT_DIR"
 # 进入脚本所在的 exp2 目录。
-# main.py、data.py、models/ 和 weights/ 中使用了一些相对路径，
+# main.py、models/ 和 weights/ 中使用了一些相对路径，
 # 因此统一工作目录可以避免从其他位置启动脚本时找不到文件。
+# CIFAR-10 数据路径由 data.py 固定指向 exp1/data，不依赖当前工作目录。
 
 mkdir -p "$RESULTS_DIR"
 # 创建实验 2 的结果目录。
@@ -198,3 +199,5 @@ fi
 
 echo "Experiment 2 metrics: $RESULTS_DIR/exp2_epoch_metrics.csv"
 # 最后打印 CSV 的保存位置，方便训练结束后直接找到结果。
+echo "Experiment 2 accuracy figure: $RESULTS_DIR/exp2_accuracy_curve.svg"
+echo "Experiment 2 loss figure: $RESULTS_DIR/exp2_loss_curve.svg"

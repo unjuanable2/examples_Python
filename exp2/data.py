@@ -18,6 +18,13 @@ from torchvision import datasets, transforms
 # - 这样导入后，后面可以直接写 datasets.CIFAR10、transforms.Compose，
 #   不需要每次都写 torchvision.datasets.CIFAR10。
 
+from pathlib import Path
+
+# exp2 与 exp1 使用同一份 CIFAR-10 数据，避免重复下载和占用磁盘空间。
+# __file__ 是当前 data.py 的路径，parent.parent 回到 intern1 项目目录，
+# 再拼接 exp1/data。使用绝对路径后，从任意目录启动 exp2 都能找到同一份数据。
+DATA_DIR = Path(__file__).resolve().parent.parent / "exp1" / "data"
+
 
 ################################################
 # 定义训练集的数据增强和预处理流程                 #
@@ -105,7 +112,7 @@ test_transforms = transforms.Compose([
 ##################################################
 # 创建 CIFAR-10 数据集对象                         #
 ##################################################
-trainset = datasets.CIFAR10( root='./data', train=True, download=True, transform=train_transforms)
+trainset = datasets.CIFAR10(root=DATA_DIR, train=True, download=True, transform=train_transforms)
 # trainset 是变量，保存 CIFAR-10 训练集对象。
 # 更像一个“可以按下标取样本的数据集合”：
 # - trainset[0] 可以取出第 0 张图片和标签；
@@ -113,12 +120,12 @@ trainset = datasets.CIFAR10( root='./data', train=True, download=True, transform
 
 # datasets.CIFAR10(...) 表示创建一个 CIFAR10 数据集对象。
 # 这里的 root、train、download、transform 都是关键字参数：
-# - root='./data'：CIFAR-10 数据集保存/读取的根目录
+# - root=DATA_DIR：从 exp1/data 保存或读取 CIFAR-10 数据；
 # - train=True：读取的是 CIFAR-10 官方训练集，大小是 50000 张；
 # - download=True：如果 root 下面没有数据，就尝试自动下载；
 # - transform=train_transforms：每次取出训练图片时，应用上面定义的训练预处理流程。
 
-testset = datasets.CIFAR10( root='./data', train=False, download=True, transform=test_transforms)
+testset = datasets.CIFAR10(root=DATA_DIR, train=False, download=True, transform=test_transforms)
 # testset 是变量，保存 CIFAR-10 测试集对象。
 
 # - train=False：读取的是 CIFAR-10 官方测试集，大小是 10000 张。

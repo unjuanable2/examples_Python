@@ -18,7 +18,8 @@ from data import testloader, trainloader
 
 # 这里的 data 不是 data/ 文件夹。
 # 判断依据：data.py 里定义了 testloader 和 trainloader；
-# data/ 文件夹只是存放图片数据，当前没有作为 Python 包被导入。
+# CIFAR-10 文件统一存放在 exp1/data，数据路径由 data.py 配置；
+# 该文件夹不是 Python 包，也不是这里 import 的 data。
 
 from models import model_factory
 # 从 models 包中导入 model_factory: 一个函数, 给它一个模型名称字符串，它返回对应的模型对象。
