@@ -1,9 +1,10 @@
+import argparse
 import csv
 # csv 是 Python 标准库，用来写 .csv 表格文件。
 
 import re
 # re 是 Python 标准库，用来做正则匹配。
-# 这里用它从 results_analysis_exp2/run_exp2_out.txt 里提取 Epoch、Learning Rate、Loss、Acc 等字段。
+# 这里用它从 FP32/FP16 日志里提取 Epoch、耗时、Learning Rate、Loss、Acc 等字段。
 
 from pathlib import Path
 # pathlib.Path 用来处理文件路径，比直接写字符串更清楚。
@@ -12,42 +13,63 @@ from pathlib import Path
 RESULTS_DIR = Path(__file__).resolve().parent
 # __file__ 是当前这个 Python 脚本文件自己的路径。
 # Path(__file__).resolve().parent 表示：
-# - 先找到 analyze_exp2_log.py 的绝对路径；
+# - 先找到 analyze_exp1_log.py 的绝对路径；
 # - 再取出它所在的文件夹。
 #
-# 因为这个脚本本身放在 results_analysis_exp2/ 里，
-# 所以 RESULTS_DIR 就是 results_analysis_exp2/ 的绝对路径。
+# 因为这个脚本本身放在 results_analysis/ 里，
+# 所以 RESULTS_DIR 就是 results_analysis/ 的绝对路径。
 #
 # 这样 exp1 根目录里只放代码和 README，
 # 训练日志、CSV、曲线图等结果文件都集中放到这个文件夹里。
 
-LOG_FILE = RESULTS_DIR / "run_exp2_out.txt"
+PRECISION = "fp32"
+LOG_FILE = RESULTS_DIR / "run_exp1_out_fp32.txt"
 # 要分析的训练日志文件。
 # / 是 pathlib.Path 的路径拼接写法。
-# 这里表示 “脚本所在文件夹/run_exp2_out.txt”，也就是 results_analysis_exp2/run_exp2_out.txt。
+# configure_output_files() 会根据 --precision 选择实际日志文件。
 
-CSV_FILE = RESULTS_DIR / "exp2_epoch_metrics.csv"
+CSV_FILE = RESULTS_DIR / "exp1_epoch_metrics_fp32.csv"
 # 输出的 CSV 表格文件。
 # CSV 可以用 Excel、Numbers、WPS、Python 等工具打开。
 
-ACCURACY_FIG = RESULTS_DIR / "exp2_accuracy_curve.png"
+ACCURACY_FIG = RESULTS_DIR / "exp1_accuracy_curve_fp32.png"
 # 输出的准确率曲线图片。
 
-LOSS_FIG = RESULTS_DIR / "exp2_loss_curve.png"
+LOSS_FIG = RESULTS_DIR / "exp1_loss_curve_fp32.png"
 # 输出的 loss 曲线图片。
 
-ACCURACY_SVG = RESULTS_DIR / "exp2_accuracy_curve.svg"
+ACCURACY_SVG = RESULTS_DIR / "exp1_accuracy_curve_fp32.svg"
 # 如果当前 Python 环境没有 matplotlib，就输出 SVG 版本的准确率曲线。
 
-LOSS_SVG = RESULTS_DIR / "exp2_loss_curve.svg"
+LOSS_SVG = RESULTS_DIR / "exp1_loss_curve_fp32.svg"
 # 如果当前 Python 环境没有 matplotlib，就输出 SVG 版本的 loss 曲线。
+
+TIME_FIG = RESULTS_DIR / "exp1_epoch_time_curve_fp32.png"
+TIME_SVG = RESULTS_DIR / "exp1_epoch_time_curve_fp32.svg"
+
+
+def configure_output_files(precision):
+    """Select the log and output names for one precision run."""
+    global PRECISION, LOG_FILE, CSV_FILE
+    global ACCURACY_FIG, LOSS_FIG, TIME_FIG
+    global ACCURACY_SVG, LOSS_SVG, TIME_SVG
+
+    PRECISION = precision
+    LOG_FILE = RESULTS_DIR / f"run_exp1_out_{precision}.txt"
+    CSV_FILE = RESULTS_DIR / f"exp1_epoch_metrics_{precision}.csv"
+    ACCURACY_FIG = RESULTS_DIR / f"exp1_accuracy_curve_{precision}.png"
+    LOSS_FIG = RESULTS_DIR / f"exp1_loss_curve_{precision}.png"
+    TIME_FIG = RESULTS_DIR / f"exp1_epoch_time_curve_{precision}.png"
+    ACCURACY_SVG = RESULTS_DIR / f"exp1_accuracy_curve_{precision}.svg"
+    LOSS_SVG = RESULTS_DIR / f"exp1_loss_curve_{precision}.svg"
+    TIME_SVG = RESULTS_DIR / f"exp1_epoch_time_curve_{precision}.svg"
 
 
 def parse_log(log_text):
     # def parse_log(...) 定义一个函数。
     #
     # 参数 log_text：
-    # - 是 results_analysis_exp2/run_exp2_out.txt 的完整文本内容；
+    # - 是当前 FP32 或 FP16 日志文件的完整文本内容；
     # - 这个函数会从里面提取每个 epoch 的训练结果和测试结果。
 
     epoch_blocks = re.split(r"(?=Epoch:\s*\d+)", log_text)
@@ -138,9 +160,13 @@ def parse_log(log_text):
                 # 如果训练结果和测试结果都找到了，就不用继续找了。
                 break
 
+        time_match = re.search(r"Epoch Time:\s*([0-9.]+)\s*seconds", block)
+
         rows.append({
             "epoch": epoch,
+            "precision": PRECISION,
             "learning_rate": learning_rate,
+            "epoch_time_seconds": float(time_match.group(1)) if time_match else "",
             "train_loss": train_item["loss"] if train_item else "",
             "train_acc": train_item["acc"] if train_item else "",
             "train_correct": train_item["correct"] if train_item else "",
@@ -160,12 +186,14 @@ def write_csv(rows):
     # 把解析出的结果写入 CSV 文件。
 
     RESULTS_DIR.mkdir(exist_ok=True)
-    # mkdir(...) 创建 results_analysis_exp2 文件夹。
+    # mkdir(...) 创建 results_analysis 文件夹。
     # exist_ok=True 表示如果文件夹已经存在，也不要报错。
 
     fieldnames = [
         "epoch",
+        "precision",
         "learning_rate",
+        "epoch_time_seconds",
         "train_loss",
         "train_acc",
         "train_correct",
@@ -219,6 +247,7 @@ def write_figures(rows):
     test_acc = [row["test_acc"] for row in rows]
     train_loss = [row["train_loss"] for row in rows]
     test_loss = [row["test_loss"] for row in rows]
+    epoch_times = [row["epoch_time_seconds"] for row in rows]
 
     plt.figure()
     # 新建第一张图。
@@ -229,7 +258,7 @@ def write_figures(rows):
 
     plt.xlabel("epoch")
     plt.ylabel("accuracy (%)")
-    plt.title("Exp1 Accuracy Curve")
+    plt.title(f"Exp1 Accuracy Curve ({PRECISION.upper()})")
     plt.legend()
     plt.grid(True)
     plt.savefig(ACCURACY_FIG, dpi=150, bbox_inches="tight")
@@ -245,12 +274,22 @@ def write_figures(rows):
 
     plt.xlabel("epoch")
     plt.ylabel("loss")
-    plt.title("Exp1 Loss Curve")
+    plt.title(f"Exp1 Loss Curve ({PRECISION.upper()})")
     plt.legend()
     plt.grid(True)
     plt.savefig(LOSS_FIG, dpi=150, bbox_inches="tight")
     plt.close()
     # 保存 loss 曲线并关闭图像。
+
+    plt.figure()
+    plt.plot(epochs, epoch_times, label="epoch time")
+    plt.xlabel("epoch")
+    plt.ylabel("time (seconds)")
+    plt.title(f"Exp1 Epoch Time ({PRECISION.upper()})")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(TIME_FIG, dpi=150, bbox_inches="tight")
+    plt.close()
 
 
 def _scale_points(xs, ys, width, height, margin, y_min=None, y_max=None):
@@ -357,10 +396,11 @@ def write_svg_figures(rows):
     test_acc = [row["test_acc"] for row in rows]
     train_loss = [row["train_loss"] for row in rows]
     test_loss = [row["test_loss"] for row in rows]
+    epoch_times = [row["epoch_time_seconds"] for row in rows]
 
     _write_svg(
         ACCURACY_SVG,
-        "Exp1 Accuracy Curve",
+        f"Exp1 Accuracy Curve ({PRECISION.upper()})",
         "accuracy (%)",
         epochs,
         [
@@ -371,13 +411,21 @@ def write_svg_figures(rows):
 
     _write_svg(
         LOSS_SVG,
-        "Exp1 Loss Curve",
+        f"Exp1 Loss Curve ({PRECISION.upper()})",
         "loss",
         epochs,
         [
             ("train loss", train_loss, "#1f77b4"),
             ("test loss", test_loss, "#d62728"),
         ],
+    )
+
+    _write_svg(
+        TIME_SVG,
+        f"Exp1 Epoch Time ({PRECISION.upper()})",
+        "time (seconds)",
+        epochs,
+        [("epoch time", epoch_times, "#2ca02c")],
     )
 
 
@@ -421,8 +469,13 @@ def print_summary(rows):
 def main():
     # main() 是脚本入口函数。
 
+    parser = argparse.ArgumentParser(description="Analyze an exp1 training log")
+    parser.add_argument("--precision", choices=("fp32", "fp16"), required=True)
+    args = parser.parse_args()
+    configure_output_files(args.precision)
+
     RESULTS_DIR.mkdir(exist_ok=True)
-    # 确保 results_analysis_exp2 文件夹存在。
+    # 确保 results_analysis 文件夹存在。
 
     if not LOG_FILE.exists():
         # 如果日志文件不存在，直接报错退出。
@@ -446,6 +499,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # 只有直接运行 python results_analysis_exp2/analyze_exp2_log.py 时，才执行 main()。
+    # 只有直接运行 python results_analysis/analyze_exp1_log.py 时，才执行 main()。
     # 如果以后别的文件 import 这个脚本，不会自动开始分析。
     main()

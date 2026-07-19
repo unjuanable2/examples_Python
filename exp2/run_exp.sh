@@ -8,14 +8,14 @@ set -u
 # 例如把 RESULTS_DIR 拼错成 RESULT_DIR 时，脚本不会把空字符串继续当作路径使用。
 
 set -o pipefail
-# run_exp2.sh 最后的训练命令使用了管道：python main.py ... | tee ...。
+# run_exp.sh 最后的训练命令使用了管道：python main.py ... | tee ...。
 # Bash 默认只使用管道最后一个程序 tee 的退出状态；这样即使 Python 训练失败，
 # 只要 tee 正常退出，整个脚本仍可能显示成功。
 # pipefail 会让管道中任意程序失败时，整条管道返回失败状态。
 
 
 ##############################################################################
-# 路径配置：保证从任意目录调用脚本时，都在 exp1+2 目录中执行实验 2       #
+# 路径配置：保证从任意目录调用脚本时，都在 exp2 目录中执行实验 2       #
 ##############################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,11 +24,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # $(...) 叫命令替换：先运行括号里的命令，再把输出结果赋给 SCRIPT_DIR。
 #
 # 例如脚本位于：
-#   /home/user/intern1/exp1+2/run_exp2.sh
+#   /home/user/intern1/exp2/run_exp.sh
 # 那么 SCRIPT_DIR 就是：
-#   /home/user/intern1/exp1+2
+#   /home/user/intern1/exp2
 #
-# 这样即使在别的目录执行 /path/to/run_exp2.sh，脚本仍能找到 main.py。
+# 这样即使在别的目录执行 /path/to/run_exp.sh，脚本仍能找到 main.py。
 
 VENV_PATH="${VENV_PATH:-$HOME/pyenv}"
 # VENV_PATH 保存 Python 虚拟环境路径。
@@ -37,11 +37,11 @@ VENV_PATH="${VENV_PATH:-$HOME/pyenv}"
 # - 如果没有设置，就默认使用 $HOME/pyenv，也就是 ~/pyenv。
 #
 # 如果虚拟环境不在默认位置，可以这样运行：
-#   VENV_PATH=/path/to/venv ./run_exp2.sh
+#   VENV_PATH=/path/to/venv ./run_exp.sh
 
-RESULTS_DIR="$SCRIPT_DIR/results_analysis_exp2"
+RESULTS_DIR="$SCRIPT_DIR/results_analysis"
 # 实验 2 的结果目录。
-# 它与实验 1 的 results_analysis_exp1 分开，防止两个实验的日志互相覆盖。
+# 每个实验都有自己的 results_analysis 目录，因此日志不会互相覆盖。
 
 OUT_FILE="$RESULTS_DIR/run_exp2_out.txt"
 # OUT_FILE 是本次训练的完整终端日志文件路径。
@@ -49,7 +49,7 @@ OUT_FILE="$RESULTS_DIR/run_exp2_out.txt"
 
 
 cd "$SCRIPT_DIR"
-# 进入脚本所在的 exp1+2 目录。
+# 进入脚本所在的 exp2 目录。
 # main.py、data.py、models/ 和 weights/ 中使用了一些相对路径，
 # 因此统一工作目录可以避免从其他位置启动脚本时找不到文件。
 
@@ -71,7 +71,7 @@ if [ ! -f "$VENV_PATH/bin/activate" ]; then
     echo "Virtual environment not found: $VENV_PATH"
     # 显示当前尝试使用但没有找到的虚拟环境路径。
 
-    echo "Set it with: VENV_PATH=/path/to/venv ./run_exp2.sh"
+    echo "Set it with: VENV_PATH=/path/to/venv ./run_exp.sh"
     # 告诉用户如何在运行脚本时指定其他虚拟环境。
 
     exit 1
@@ -158,10 +158,10 @@ CMD=(
 # | 是管道，把左边 Python 程序的输出传给右边的 tee。
 # tee 同时完成两件事：
 # - 继续在终端实时显示训练过程；
-# - 把相同内容写入 results_analysis_exp2/run_exp2_out.txt。
+# - 把相同内容写入 results_analysis/run_exp2_out.txt。
 #
 # 因为脚本开头启用了 set -o pipefail，所以 Python 训练一旦失败，
-# 即使 tee 成功写入日志，run_exp2.sh 最终仍会返回失败状态。
+# 即使 tee 成功写入日志，run_exp.sh 最终仍会返回失败状态。
 
 TRAIN_STATUS=${PIPESTATUS[0]}
 # PIPESTATUS 是 Bash 保存管道中各个命令退出状态的数组。

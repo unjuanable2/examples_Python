@@ -8,7 +8,7 @@
 
 # exp1：CIFAR-10 图像分类训练实验
 （Pytorch使用入门）
-这个实验的主任务是用 PyTorch 在 CIFAR-10 上训练一个图像分类模型。CIFAR-10 每张图像是 `32x32` 的 RGB 图片，标签一共有 10 类：飞机、汽车、鸟、猫、鹿、狗、青蛙、马、船、卡车。
+这个实验的主任务是用 PyTorch 在 CIFAR-10 上分别进行一次 FP32 和 FP16 ResNet18 训练，对比两种精度的每个 epoch 耗时、准确率和 loss。CIFAR-10 每张图像是 `32x32` 的 RGB 图片，标签一共有 10 类：飞机、汽车、鸟、猫、鹿、狗、青蛙、马、船、卡车。
 
 ## 整体过程
 
@@ -16,13 +16,18 @@
 
 - `main.py` 是训练入口，负责解析命令行参数。
   ```bash
+  # FP32
   python main.py --model resnet18 --steps 200 --lr 0.2 --gpu
+
+  # FP16（run_exp.sh 同时启用固定 loss scaling）
+  python main.py --model resnet18 --steps 200 --lr 0.2 --gpu --fp16 --loss_scaling
   # --model resnet18：指定使用模型 resnet18（已写好）
   # --steps 200：训练 200 个 epoch
   # --lr 0.2：初始学习率为 0.2
   # --gpu：如果机器有 CUDA，就把模型和数据放到 GPU 上训练；
   # `--fp16`、`--loss_scaling`：可选的半精度训练相关参数。
   ```
+- 推荐直接执行 `./run_exp.sh`。脚本严格按 FP32、FP16 的顺序各训练 200 个 epoch；FP32 成功并完成日志分析后才会开始 FP16。两次训练使用相同模型、数据、batch size、epoch 数和初始学习率。
 - 解析完命令行参数后，`main.py` 传参数(model name)，通过 `models/model_factory_dict.py` 创建模型。
   - `models/` 文件夹里保存了多种网络结构定义，e.g. `resnet.py`、 `alexnet.py`、 `vgg.py`、 `mobilenet.py` 等；
     - `models/__init__.py` 把 `model_factory` 暴露出来；
@@ -121,7 +126,8 @@
 
 ### 其它文件/文件夹在实验里的作用
 - `./data`: 保存下载下来的 CIFAR-10 数据集
-- `./results_analysis_exp1/analyze_exp1_log.py`：日志分析脚本，负责从训练日志生成 CSV 和曲线图
+- `./results_analysis/analyze_exp1_log.py`：日志分析脚本，负责从训练日志生成 CSV 和曲线图
+- `./run_exp.sh`：依次启动 FP32 和 FP16 训练，并把两次实验的结果分别命名，避免互相覆盖。
 - `train.py`：封装模型从初始化到训练、测试、保存/加载权重的完整流程，并实现本实验使用的手工 FP16 混合精度训练。核心是 `Trainer` 类，各子函数功能包含在上述整体流程中, 除了
   - `load_model()`：从指定路径或默认路径读取 checkpoint，恢复模型参数、最好准确率和对应 epoch；
     - 当前主训练流程未调用该函数。
@@ -150,10 +156,11 @@ FP16 的优点是每个数只占 FP32 一半的存储空间，因此可以降低
 ## 结果 和 分析
 - 硬件：拯救者 r9000p ( NVIDIA RTX 3060 GPU )
   操作系统 Ubuntu 22.04 
-  总运行时长 about 2h 
+  原有 FP32 单次训练记录总运行时长约 2h；新的 FP32＋FP16 对比总时长需要重新运行后，以两份 CSV 的 `epoch_time_seconds` 为准。
   运行时 GPU temperature ~= (正常模式)86C - (性能模式)76C - 79C
-- 运行 `run_exp1.sh` 后，脚本会自动把完整 terminal 输出日志放到  `./results_analysis_exp1/run_exp1_out.txt`: 
-  - 里面经常会看到类似下面这种进度条输出, 表示“当前这个 epoch 里，训练集/测试集已经处理到哪里了，以及目前统计到的 loss 和 accuracy”
+- 运行 `run_exp.sh` 后，脚本会依次运行 FP32、FP16，并把完整 terminal 输出分别放到 `./results_analysis/run_exp1_out_fp32.txt`、`./results_analysis/run_exp1_out_fp16.txt`。
+  - 每个 epoch 都会额外打印 `Epoch Time: ... seconds`。该时间在 CUDA 同步后统计，范围包含这一轮完整的训练和测试，因此可以用于 FP32/FP16 速度对比。
+  - 日志里面经常会看到类似下面这种进度条输出，表示“当前这个 epoch 里，训练集/测试集已经处理到哪里了，以及目前统计到的 loss 和 accuracy”：
     ```bash
     [================================================================>]  Step: 496ms | Tot: 28s989ms | Loss: 2.319 | Acc: 13.536% (6768/50000) 391/391
     ```
@@ -178,30 +185,31 @@ FP16 的优点是每个数只占 FP32 一半的存储空间，因此可以降低
       - `utils.py` 里的 `progress_bar()` 用它来在终端同一行上刷新进度条。
       - 真实 terminal 会执行这些退格动作，所以你看到的是一条动态刷新的进度条；
       - 但是输出被保存到 txt 文件后，txt 不会执行退格动作，只会把这些控制字符原样保存下来，所以看起来像乱码。因此, 可以忽略这些 `\b\b\b`，重点看 `Step / Tot / Loss / Acc / 391/391` 这些字段。
-- 运行 `run_exp1.sh` 的同时，脚本会自动从 `./results_analysis_exp1/run_exp1_out.txt` 里提取每个 epoch 的结果，并生成：
-  - `./results_analysis_exp1/exp1_epoch_metrics.csv`：每个 epoch 一行的训练记录，主要列含义：
-    - `epoch`：第几个 epoch，一共解析出 `200` 个 epoch
-    - `learning_rate`：这一轮使用的学习率
-    - `train_loss`：这一轮训练集上的平均 loss
-    - `train_acc`：这一轮训练集上的准确率 = 训练精度
-      - `train_correct / train_samples`：训练集中预测正确的样本数 / 训练样本总数
-    - `test_loss`：这一轮测试集上的 loss
-    - `test_acc`：这一轮测试集上的准确率，更能反映模型对没见过数据的泛化能力
-      - `test_correct / test_samples`：测试集中预测正确的样本数 / 测试样本总数
-      - 如果 `train_acc` 很高，但 `test_acc` 明显低很多，说明模型可能在训练集上记得很好，但泛化能力有限。
-        - 模型只在 `train()` 里用训练集做 `loss.backward()` 和 `optimizer.step()`，也就是只根据训练集更新参数；
-        - 测试集只在 `evaluate()` 里用来算准确率，不会执行反向传播，也不会更新参数。
-  - `./results_analysis_exp1/exp1_accuracy_curve.png` / `./results_analysis_exp1/exp1_accuracy_curve.svg`：每张图都有 训练精度 = 训练准确率 `train accuracy` 曲线、测试准确率 `test accuracy` 曲线；
-    <img src="results_analysis_exp1/exp1_accuracy_curve.svg" alt="exp1 accuracy curve" width="70%">
-
+- 运行 `run_exp.sh` 的同时，脚本会分析两份日志并分别生成`./results_analysis/exp1_epoch_metrics_fp32.csv`、`./results_analysis/exp1_epoch_metrics_fp16.csv`。每个 CSV 中每个 epoch 占一行，主要列含义：
+  - `epoch`：第几个 epoch，一共解析出 `200` 个 epoch
+  - `precision`：当前记录属于 `fp32` 还是 `fp16`
+  - `learning_rate`：这一轮使用的学习率
+  - `epoch_time_seconds`：这一轮完整训练和测试的墙钟时间，单位为秒
+  - `train_loss`：这一轮训练集上的平均 loss
+  - `train_acc`：这一轮训练集上的准确率 = 训练精度
+    - `train_correct / train_samples`：训练集中预测正确的样本数 / 训练样本总数
+  - `test_loss`：这一轮测试集上的 loss
+  - `test_acc`：这一轮测试集上的准确率，更能反映模型对没见过数据的泛化能力
+    - `test_correct / test_samples`：测试集中预测正确的样本数 / 测试样本总数
+    - 如果 `train_acc` 很高，但 `test_acc` 明显低很多，说明模型可能在训练集上记得很好，但泛化能力有限。
+      - 模型只在 `train()` 里用训练集做 `loss.backward()` 和 `optimizer.step()`，也就是只根据训练集更新参数；
+      - 测试集只在 `evaluate()` 里用来算准确率，不会执行反向传播，也不会更新参数。
+- `run_exp.sh` 也会分析 csv 产生（如果 Python 环境里有 `matplotlib`，会生成 `.png`；如果没有，会自动生成 `.svg`。）
+  - 准确率曲线 `exp1_accuracy_curve_fp32.png/.svg` 和 `exp1_accuracy_curve_fp16.png/.svg`
+    - 每张图都有训练准确率和测试准确率曲线。
+      <img src="results_analysis/exp1_accuracy_curve_fp32.svg" alt="exp1 FP32 accuracy curve" width="70%">
     - 训练后期 `train accuracy` 接近 100%，而 `test accuracy` 稳定在 91% 左右，说明模型已经基本把训练集学得很熟，但测试集还有约 8% 到 9% 的错误
       - 最佳训练准确率 = `99.786%`，出现在 epoch `164`
       - 最佳测试准确率 = `91.640%`，出现在 epoch `138`
       - 最后一个 epoch：`train_acc = 99.744%`，`test_acc = 91.530%`
-  - `results_analysis_exp1/exp1_loss_curve.png` / `results_analysis_exp1/exp1_loss_curve.svg`：每张图都有 训练 loss 曲线、测试 loss 曲线。这张图用来观察 loss 是否整体下降。
-    <img src="results_analysis_exp1/exp1_loss_curve.svg" alt="exp1 loss curve" width="70%">
+  - loss 曲线分别保存为 `exp1_loss_curve_fp32.png/.svg` 和 `exp1_loss_curve_fp16.png/.svg`。
+  - epoch 耗时曲线分别保存为 `exp1_epoch_time_curve_fp32.png/.svg` 和 `exp1_epoch_time_curve_fp16.png/.svg`，可直接比较两种精度各轮训练速度。
 
-    - 如果 Python 环境里有 `matplotlib`，会生成 `.png`；如果没有，会自动生成 `.svg`。
  
 
 ## Questions

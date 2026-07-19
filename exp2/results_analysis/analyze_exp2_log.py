@@ -3,7 +3,7 @@ import csv
 
 import re
 # re 是 Python 标准库，用来做正则匹配。
-# 这里用它从 results_analysis_exp1/run_exp1_out.txt 里提取 Epoch、Learning Rate、Loss、Acc 等字段。
+# 这里用它从 results_analysis/run_exp2_out.txt 里提取 Epoch、Learning Rate、Loss、Acc 等字段。
 
 from pathlib import Path
 # pathlib.Path 用来处理文件路径，比直接写字符串更清楚。
@@ -12,34 +12,34 @@ from pathlib import Path
 RESULTS_DIR = Path(__file__).resolve().parent
 # __file__ 是当前这个 Python 脚本文件自己的路径。
 # Path(__file__).resolve().parent 表示：
-# - 先找到 analyze_exp1_log.py 的绝对路径；
+# - 先找到 analyze_exp2_log.py 的绝对路径；
 # - 再取出它所在的文件夹。
 #
-# 因为这个脚本本身放在 results_analysis_exp1/ 里，
-# 所以 RESULTS_DIR 就是 results_analysis_exp1/ 的绝对路径。
+# 因为这个脚本本身放在 results_analysis/ 里，
+# 所以 RESULTS_DIR 就是 results_analysis/ 的绝对路径。
 #
 # 这样 exp1 根目录里只放代码和 README，
 # 训练日志、CSV、曲线图等结果文件都集中放到这个文件夹里。
 
-LOG_FILE = RESULTS_DIR / "run_exp1_out.txt"
+LOG_FILE = RESULTS_DIR / "run_exp2_out.txt"
 # 要分析的训练日志文件。
 # / 是 pathlib.Path 的路径拼接写法。
-# 这里表示 “脚本所在文件夹/run_exp1_out.txt”，也就是 results_analysis_exp1/run_exp1_out.txt。
+# 这里表示 “脚本所在文件夹/run_exp2_out.txt”，也就是 results_analysis/run_exp2_out.txt。
 
-CSV_FILE = RESULTS_DIR / "exp1_epoch_metrics.csv"
+CSV_FILE = RESULTS_DIR / "exp2_epoch_metrics.csv"
 # 输出的 CSV 表格文件。
 # CSV 可以用 Excel、Numbers、WPS、Python 等工具打开。
 
-ACCURACY_FIG = RESULTS_DIR / "exp1_accuracy_curve.png"
+ACCURACY_FIG = RESULTS_DIR / "exp2_accuracy_curve.png"
 # 输出的准确率曲线图片。
 
-LOSS_FIG = RESULTS_DIR / "exp1_loss_curve.png"
+LOSS_FIG = RESULTS_DIR / "exp2_loss_curve.png"
 # 输出的 loss 曲线图片。
 
-ACCURACY_SVG = RESULTS_DIR / "exp1_accuracy_curve.svg"
+ACCURACY_SVG = RESULTS_DIR / "exp2_accuracy_curve.svg"
 # 如果当前 Python 环境没有 matplotlib，就输出 SVG 版本的准确率曲线。
 
-LOSS_SVG = RESULTS_DIR / "exp1_loss_curve.svg"
+LOSS_SVG = RESULTS_DIR / "exp2_loss_curve.svg"
 # 如果当前 Python 环境没有 matplotlib，就输出 SVG 版本的 loss 曲线。
 
 
@@ -47,7 +47,7 @@ def parse_log(log_text):
     # def parse_log(...) 定义一个函数。
     #
     # 参数 log_text：
-    # - 是 results_analysis_exp1/run_exp1_out.txt 的完整文本内容；
+    # - 是 results_analysis/run_exp2_out.txt 的完整文本内容；
     # - 这个函数会从里面提取每个 epoch 的训练结果和测试结果。
 
     epoch_blocks = re.split(r"(?=Epoch:\s*\d+)", log_text)
@@ -160,7 +160,7 @@ def write_csv(rows):
     # 把解析出的结果写入 CSV 文件。
 
     RESULTS_DIR.mkdir(exist_ok=True)
-    # mkdir(...) 创建 results_analysis_exp1 文件夹。
+    # mkdir(...) 创建 results_analysis 文件夹。
     # exist_ok=True 表示如果文件夹已经存在，也不要报错。
 
     fieldnames = [
@@ -422,7 +422,7 @@ def main():
     # main() 是脚本入口函数。
 
     RESULTS_DIR.mkdir(exist_ok=True)
-    # 确保 results_analysis_exp1 文件夹存在。
+    # 确保 results_analysis 文件夹存在。
 
     if not LOG_FILE.exists():
         # 如果日志文件不存在，直接报错退出。
@@ -446,6 +446,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # 只有直接运行 python results_analysis_exp1/analyze_exp1_log.py 时，才执行 main()。
+    # 只有直接运行 python results_analysis/analyze_exp2_log.py 时，才执行 main()。
     # 如果以后别的文件 import 这个脚本，不会自动开始分析。
     main()
