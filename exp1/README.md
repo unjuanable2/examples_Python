@@ -200,15 +200,21 @@ FP16 的优点是每个数只占 FP32 一半的存储空间，因此可以降低
       - 模型只在 `train()` 里用训练集做 `loss.backward()` 和 `optimizer.step()`，也就是只根据训练集更新参数；
       - 测试集只在 `evaluate()` 里用来算准确率，不会执行反向传播，也不会更新参数。
 - `run_exp.sh` 也会分析 csv 产生（如果 Python 环境里有 `matplotlib`，会生成 `.png`；如果没有，会自动生成 `.svg`。）
-  - 准确率曲线 `exp1_accuracy_curve_fp32.png/.svg` 和 `exp1_accuracy_curve_fp16.png/.svg`
-    - 每张图都有训练准确率和测试准确率曲线。
-      <img src="results_analysis/exp1_accuracy_curve_fp32.svg" alt="exp1 FP32 accuracy curve" width="70%">
-    - 训练后期 `train accuracy` 接近 100%，而 `test accuracy` 稳定在 91% 左右，说明模型已经基本把训练集学得很熟，但测试集还有约 8% 到 9% 的错误
+  - 准确率曲线 `exp1_accuracy_curve_fp32.png/.svg` 和 `exp1_accuracy_curve_fp16.png/.svg`（每张图都有训练准确率和测试准确率曲线）
+    - fp32: 训练后期 `train accuracy` 接近 100%，而 `test accuracy` 稳定在 91% 左右，说明模型已经基本把训练集学得很熟，但测试集还有约 8% 到 9% 的错误
       - 最佳训练准确率 = `99.786%`，出现在 epoch `164`
       - 最佳测试准确率 = `91.640%`，出现在 epoch `138`
-      - 最后一个 epoch：`train_acc = 99.744%`，`test_acc = 91.530%`
+      - 最后一个 epoch: `train_acc = 99.744%`，`test_acc = 91.530%`
+    - fp16: 训练后期 `train accuracy` 接近 100%，`test accuracy` 稳定在 91% 左右；
+      - 最佳训练准确率为 `99.830%`，出现在 epoch `144`
+      - 最佳测试准确率为 `91.860%`，出现在 epoch `160`
+      - 最后一个 epoch: `train_acc = 99.754%`、`test_acc = 91.720%`。
+      - 整体结果与 fp32 的最终准确率非常接近，说明本次实验中使用 fp16 没有造成明显的准确率下降，最终测试准确率还略高 `0.08` 个百分点。
   - loss 曲线分别保存为 `exp1_loss_curve_fp32.png/.svg` 和 `exp1_loss_curve_fp16.png/.svg`。
   - epoch 耗时曲线分别保存为 `exp1_epoch_time_curve_fp32.png/.svg` 和 `exp1_epoch_time_curve_fp16.png/.svg`，可直接比较两种精度各轮训练速度。
+    - fp32: 200 个 epoch 的平均耗时为 `30.658 s/epoch`（中位数 `30.658 s`），总耗时约 `6131.606 s`（`102.19 min`）。除首轮外，各轮耗时在 `30.481–30.854 s` 之间，整体较稳定。
+    - fp16: 200 个 epoch 的平均耗时为 `18.486 s/epoch`（中位数 `18.463 s`），总耗时约 `3697.230 s`（`61.62 min`）。
+      - 相比 fp32，平均每轮缩短约 `39.70%`，速度约为 `1.66×`，200 轮共节省约 `2434.377 s`（`40.57 min`）
 
  
 
