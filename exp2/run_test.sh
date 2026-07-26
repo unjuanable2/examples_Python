@@ -31,9 +31,8 @@ python -c "import torch, sys; ok=torch.cuda.is_available(); print('CUDA GPU:', t
 cd "$SCRIPT_DIR"
 
 # 默认读取 test.jpeg，输出 test_result.jpeg，不覆盖原始网络图片。
-# infer.py 会自动从 weights/alexnet 中选择 checkpoint 内 acc 最大的文件。
-python infer.py \
+# test.py 会自动从 weights/alexnet 中选择 checkpoint 内 acc 最大的文件。
+python test.py \
     --image "$SCRIPT_DIR/test.jpeg" \
     --weights-dir "$SCRIPT_DIR/weights/alexnet" \
     --output "$SCRIPT_DIR/test_result.jpeg"
-

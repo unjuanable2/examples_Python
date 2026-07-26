@@ -1,45 +1,11 @@
-import torch
-# torch 是 PyTorch 的主模块。
-# 这里主要使用 torch.softmax()、torch.max() 以及张量相关操作。
-
 import torch.nn as nn
 # torch.nn 提供构建神经网络需要的层和基础类。
 # 使用 as nn 起别名后，可以写 nn.Module、nn.Conv2d、nn.Linear 等简洁形式。
-
-import os
-# os.path.join() 用来拼接权重文件和测试图片的路径。
-
-from torchvision import transforms
-# transforms 用来把测试图片缩放、转换成张量并进行标准化。
-
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
-# PIL 用于读取、绘制和保存单张测试图片。
-# ImageFilter 当前没有实际使用，保留它不会影响模型训练和推理。
 
 
 NUM_CLASSES = 10
 # CIFAR-10 一共有 10 个类别，所以 AlexNet 最后一层输出 10 个 logits。
 # logits 是模型对每个类别给出的原始分数，还不是概率。
-
-
-tran = transforms.Compose([
-    # Compose 会让测试图片依次经过下面三个预处理步骤。
-
-    transforms.Resize((32, 32), interpolation=Image.BICUBIC),
-    # 把输入图片统一缩放为 32x32，以匹配当前 AlexNet 的输入尺寸。
-    # BICUBIC 表示使用双三次插值完成缩放。
-
-    transforms.ToTensor(),
-    # 把 PIL 图片转换成形状为 [C, H, W] 的 FloatTensor，
-    # 同时把像素值从 [0, 255] 缩放到 [0, 1]。
-
-    transforms.Normalize(
-        [0.4914, 0.4822, 0.4465],
-        [0.2023, 0.1994, 0.201]
-    )
-    # 使用 CIFAR-10 的 RGB 均值和标准差进行标准化。
-    # 推理时必须使用与训练时相同的标准化方法。
-])
 
 
 class AlexNet(nn.Module):
@@ -167,81 +133,3 @@ class AlexNet(nn.Module):
         return x
         # 把 logits 返回给训练代码。
         # train.py 会使用它计算交叉熵损失和预测类别。
-
-
-def test():
-    # test() 用于加载已经训练好的 AlexNet 权重，对单张 test.jpg 做推理。
-    # 它不是 main.py 中的训练流程；只有直接运行本文件时才会执行。
-
-    net = AlexNet().cuda()
-    # 创建 AlexNet 模型，并把模型参数移动到默认 CUDA GPU。
-    # 因此直接运行此测试函数时，机器必须能够使用 CUDA。
-
-    model_path = os.path.join("weights", "alexnet.pt")
-    # 拼出权重路径 weights/alexnet.pt。
-
-    print("Model PATH: " + model_path)
-
-    checkpoint = torch.load(model_path)
-    # 读取保存的 checkpoint 字典。
-
-    net.load_state_dict(checkpoint['net'])
-    # checkpoint['net'] 保存模型的参数，把它加载进刚创建的 AlexNet。
-
-    test_image = os.path.join('test.jpg')
-    img = Image.open(test_image)
-    # 打开当前目录下的测试图片。
-
-    img_tensor = tran(img)
-    # 应用前面定义的预处理。
-    # 此时 img_tensor 的形状是 [C, H, W]，即 [3, 32, 32]。
-
-    input_tensor = img_tensor.unsqueeze_(0).cuda()
-    # unsqueeze_(0) 在最前面增加 batch 维度：
-    # [3, 32, 32] -> [1, 3, 32, 32]，然后把输入移动到 GPU。
-
-    y = net(input_tensor)
-    # 前向传播，得到形状为 [1, 10] 的 logits。
-
-    percentage = torch.softmax(y[0], dim=0) * 100
-    # 对第 0 张图片的 10 个 logits 做 softmax，将其转换成概率百分比。
-
-    print('cat percentage:')
-    print(percentage)
-
-    cl_fp32, index_fp32 = torch.max(percentage, 0)
-    # 找出最大概率 cl_fp32 以及对应的类别编号 index_fp32。
-
-    classes = [
-        'plane', 'car', 'bird', 'cat', 'deer',
-        'dog', 'frog', 'horse', 'ship', 'truck'
-    ]
-    # CIFAR-10 标签编号 0~9 对应的英文类别名。
-
-    font = ImageFont.truetype('LiberationSans-Regular.ttf', 30)
-    # 加载字体，用于把预测结果绘制到图片上。
-
-    draw = ImageDraw.Draw(img)
-    # 创建一个可以在原图片上绘制文字的对象。
-
-    text = (
-        str(classes[index_fp32])
-        + ' ('
-        + '{:.2f}'.format(cl_fp32.item())
-        + '%)'
-    )
-    # 组合预测类别和概率，例如 cat (87.35%)。
-
-    draw.text(
-        (0, 0), text, font=font, fill="#ff00ff", spacing=0, align='left'
-    )
-    # 在图片左上角用紫色文字写出预测结果。
-
-    img.save(test_image, 'jpeg')
-    # 把绘制后的图片覆盖保存回 test.jpg。
-
-
-if __name__ == '__main__':
-    # 只有执行 python models/alexnet.py 时条件才成立。
-    # 当 model_factory_dict.py 导入 AlexNet 时，不会自动运行 test()。
-    test()

@@ -10,7 +10,8 @@
 ## 整体过程
 （模型部署 / 推理加速入门）
 
-这个实验的主任务不是重新训练模型，而是把已经训练好的 PyTorch 模型拿来做推理加速。大致目标是：先用普通 PyTorch 模型推理，再用 `torch2trt` 把模型转换成 TensorRT 模型，然后比较两种推理方式在同一张图片上的耗时和预测结果。
+这个实验的主任务不是重新训练模型，而是把已经训练好的 PyTorch 模型拿来做推理加速。
+大致目标是：先用普通 PyTorch 模型推理；再用 `torch2trt` 把模型转换成 TensorRT 模型；然后比较两种推理方式在同一张图片上的耗时和预测结果。
 
 推理流程可以按代码执行顺序理解：
 
@@ -20,15 +21,14 @@
   # --model alexnet：指定要加载 alexnet 这个模型结构和权重；
   # --gpu：表示必须使用 CUDA GPU。TensorRT 推理依赖 NVIDIA GPU，所以这里必须开 GPU。
   ```
-- 解析完命令行参数后，`int8_infer.py` 通过 `model_factory(model_name)` 创建模型对象。
-  - 这里的 `model_factory` 来自 `models`。
-  - 也就是说，`exp3` 的推理脚本需要能找到 `exp1+2/models/` 里的模型定义。
-  - 当命令行参数是 `--model alexnet` 时，代码会创建 AlexNet 结构的模型对象。
-- 如果传入了 `--gpu`，并且当前机器能使用 CUDA，代码会做几件事：
-  - `torch.backends.cudnn.enabled = True`：启用 CuDNN，让 PyTorch 可以调用 NVIDIA 对卷积等操作做过优化的底层库；
-  - `torch.backends.cudnn.benchmark = True`：让 CuDNN 根据当前输入尺寸自动尝试并选择更快的卷积算法；
-  - `model = model.cuda()`：把模型从 CPU 内存移动到 GPU 显存上。
-  - 如果没有传 `--gpu`，或者机器不能使用 CUDA，程序会直接退出。
+- 解析完命令行参数后，`int8_infer.py` 传参数(model name)、通过 `models/model_factory_dict.py` 创建模型对象。
+  - 这里的 `models` 用的是 `exp1+2/models/` 里的模型定义。
+    - 当命令行参数是 `--model alexnet` 时，代码会创建 AlexNet 结构的模型对象。
+  - 如果传入了 `--gpu`，并且当前机器能使用 CUDA，代码会做几件事：
+    - `torch.backends.cudnn.enabled = True`：启用 CuDNN，让 PyTorch 可以调用 NVIDIA 对卷积等操作做过优化的底层库；
+    - `torch.backends.cudnn.benchmark = True`：让 CuDNN 根据当前输入尺寸自动尝试并选择更快的卷积算法；
+    - `model = model.cuda()`：把模型从 CPU 内存移动到 GPU 显存上。
+    - 如果没有传 `--gpu`，或者机器不能使用 CUDA，程序会直接退出。
 - `model.load_state_dict(torch.load('./weights/'+model_name+'.pt')['net'])` 加载已经训练好的模型权重。
   - `model_factory(model_name)` 只是创建“空模型结构”；
   - `weights/alexnet.pt` 里保存的是训练好的参数；
