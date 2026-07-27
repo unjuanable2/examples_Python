@@ -1,0 +1,19 @@
+============================================================
+Exp3: AlexNet PyTorch FP32 vs TensorRT INT8
+============================================================
+Started at: 2026-07-27 05:26:04 CDT
+Script directory: /home/jianing/Intern1/exp3
+Log file: /home/jianing/Intern1/exp3/results_analysis/run_exp3_out.txt
+Warm-up runs: 50
+Measured runs: 100
+Files already downloaded and verified
+Testing model: alexnet
+Average Time Spent for fp32: 0.482ms
+Average Time Spent for int8: 0.124ms
+Mode: fp32, avg 0.48ms bird (97.93%)
+
+Mode: int8, avg 0.12ms bird (98.43%)
+Acc for fp32: 83.05%; Total time: 14029.809ms
+Acc for trt int8: 82.91%; Total time: 9495.364ms
+Finished at: 2026-07-27 05:27:06 CDT
+Experiment completed successfully.
