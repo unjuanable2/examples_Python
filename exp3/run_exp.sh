@@ -23,6 +23,22 @@ mkdir -p "$RESULTS_DIR"
 # 都会经过 tee：既保留终端显示，也覆盖写入本次实验日志。
 exec > >(tee "$LOG_FILE") 2>&1
 
+# 激活安装了 PyTorch、CUDA、TensorRT 和 torch2trt 的 Python 虚拟环境。
+# 如果 ~/pyenv/bin/activate 不存在或激活失败，set -e 会让脚本立即停止，
+# 错误信息也会被上面的 tee 保存到日志。
+source ~/pyenv/bin/activate
+
+# TensorRT 导入时，由系统的动态链接器加载 CUDA 库，
+# 所以需要把 CUDA 动态库所在目录加入动态库搜索路径 LD_LIBRARY_PATH。
+#
+# 激活 Python 虚拟环境只会切换 Python 和 pip，不会自动把虚拟环境里的 cuBLAS 加入动态库搜索路径，
+# 不会自动告诉 Linux 的动态链接器去哪里寻找 CUDA 动态库
+#
+# 当前 CUDA 11 的 libcublas.so.11 位于 nvidia/cublas/lib；torch/lib 也包含
+# PyTorch 随包安装的 CUDA 运行库，因此把这两个目录加入 LD_LIBRARY_PATH。
+SITE_PACKAGES="$(python3 -c 'import site; print(site.getsitepackages()[0])')"
+export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/torch/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 echo "============================================================"
 echo "Exp3: AlexNet PyTorch FP32 vs TensorRT INT8"
 echo "============================================================"
