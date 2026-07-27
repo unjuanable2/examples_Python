@@ -1,114 +1,123 @@
-- [exp3：TensorRT / INT8 推理实验](#exp3tensorrt--int8-推理实验)
+- [exp3：AlexNet TensorRT INT8 推理实验](#exp3alexnet-tensorrt-int8-推理实验)
   - [整体过程](#整体过程)
     - [其它文件/文件夹在实验里的作用](#其它文件文件夹在实验里的作用)
-  - [推理结果](#推理结果)
-  - [Questions](#questions)
+    - [INT8 量化和校准的原理补充](#int8-量化和校准的原理补充)
+  - [结果 和 分析](#结果-和-分析)
 
 
-# exp3：TensorRT / INT8 推理实验
+# exp3：AlexNet TensorRT INT8 推理实验
+（模型部署 / INT8 推理加速入门）
+
+这个实验使用 exp2 训练好的 FP32 AlexNet，通过 torch2trt 构建 TensorRT INT8 engine，并比较 PyTorch FP32 与 TensorRT INT8 的单图预测、平均推理延迟以及完整 CIFAR-10 测试集准确率。
 
 ## 整体过程
-（模型部署 / 推理加速入门）
 
-这个实验的主任务不是重新训练模型，而是把已经训练好的 PyTorch 模型拿来做推理加速。
-大致目标是：先用普通 PyTorch 模型推理；再用 `torch2trt` 把模型转换成 TensorRT 模型；然后比较两种推理方式在同一张图片上的耗时和预测结果。
-
-推理流程可以按代码执行顺序理解：
-
-- `int8_infer.py` 是推理入口，负责解析命令行参数。
-  ```bash
-  python int8_infer.py --model alexnet --gpu
-  # --model alexnet：指定要加载 alexnet 这个模型结构和权重；
-  # --gpu：表示必须使用 CUDA GPU。TensorRT 推理依赖 NVIDIA GPU，所以这里必须开 GPU。
+- 运行前需要把 exp2 训练得到的 FP32 checkpoint 放到：
+  ```text
+  exp3/weights/alexnet/weights.130.83.050.pt
   ```
-- 解析完命令行参数后，`int8_infer.py` 传参数(model name)、通过 `models/model_factory_dict.py` 创建模型对象。
-  - 这里的 `models` 用的是 `exp1+2/models/` 里的模型定义。
-    - 当命令行参数是 `--model alexnet` 时，代码会创建 AlexNet 结构的模型对象。
-  - 如果传入了 `--gpu`，并且当前机器能使用 CUDA，代码会做几件事：
-    - `torch.backends.cudnn.enabled = True`：启用 CuDNN，让 PyTorch 可以调用 NVIDIA 对卷积等操作做过优化的底层库；
-    - `torch.backends.cudnn.benchmark = True`：让 CuDNN 根据当前输入尺寸自动尝试并选择更快的卷积算法；
-    - `model = model.cuda()`：把模型从 CPU 内存移动到 GPU 显存上。
-    - 如果没有传 `--gpu`，或者机器不能使用 CUDA，程序会直接退出。
-- `model.load_state_dict(torch.load('./weights/'+model_name+'.pt')['net'])` 加载已经训练好的模型权重。
-  - `model_factory(model_name)` 只是创建“空模型结构”；
-  - `weights/alexnet.pt` 里保存的是训练好的参数；
-  - 只有把权重加载进去，这个模型才是已经训练好的模型。
-- `dataset.py` 负责准备两类数据：
-  - `testloader`：从 CIFAR-10 测试集读取图片，用来测试模型整体准确率；
-  - `QDataset`：从 `data/q/*.jpg` 读取图片，原本是给 INT8 量化校准使用的。
-    - INT8 量化需要一批代表性图片，让 TensorRT 估计模型中间结果的大致数值范围；
-    - 当前 `int8_infer.py` 里创建了 `cali_cifar10 = QDataset(...)`，但真正传给 `torch2trt()` 的校准参数被注释掉了，所以现在这份代码更像是“准备了 INT8 校准数据，但校准调用还没有完整启用”。
-- `model.eval()` 把模型切换到评估模式。
-  - 推理时不需要 Dropout 的随机行为；
-  - BatchNorm 也应该使用训练后保存下来的统计量，而不是继续按当前 batch 更新统计量。
-- `x = torch.randn([1, 3, 32, 32]).cuda()` 创建一个假的输入张量，形状是 `[1, 3, 32, 32]`。
-  - `1` 表示 batch size 是 1；
-  - `3` 表示 RGB 三个通道；
-  - `32 x 32` 对应 CIFAR-10 图片大小；
-  - `torch2trt()` 需要一个示例输入，才能知道模型输入长什么样，并据此转换 TensorRT engine。
-- `model_trt_int8 = torch2trt(model, [x], fp16_mode=True, int8_mode=True)` 尝试把 PyTorch 模型转换成 TensorRT 模型。
-  - `model` 是原始 PyTorch 模型；
-  - `[x]` 是示例输入；
-  - `fp16_mode=True` 表示允许 TensorRT 使用 FP16 半精度计算；
-  - `int8_mode=True` 表示尝试使用 INT8 推理；
-  - 但下面这些更完整的 INT8 校准参数目前被注释掉了：
-    ```python
-    # max_batch_size=1,
-    # int8_calib_dataset=cali_cifar10,
-    # int8_calib_algorithm=trt.CalibrationAlgoType.ENTROPY_CALIBRATION_2
-    ```
-  - 所以如果以后要认真做 INT8 量化，需要重点检查这几行是否应该恢复。
-- 后面的大段 `test(model)` 和 `test(model_trt_int8)` 被三引号注释掉了。
-  - 如果恢复这段代码，它会遍历 CIFAR-10 测试集，比较 PyTorch 模型和 TensorRT 模型在整个测试集上的准确率和耗时；
-  - 当前实际执行的是下面的单张图片推理流程。
-- `test.jpg` 是单张测试图片。
-  - 代码用 `Image.open(test_image)` 打开图片；
-  - 再用 `cali_augmentation` 做 Resize、ToTensor、Normalize；
-  - `img_tensor.unsqueeze_(0)` 在最前面加一个 batch 维度，把图片从 `[3, 32, 32]` 变成 `[1, 3, 32, 32]`；
-  - 最后 `.cuda()` 把图片数据移动到 GPU。
-- 对同一张图片分别做两次推理：
-  - `y_fp32 = model(img_tensor)`：用原始 PyTorch 模型推理；
-  - `y_int8 = model_trt_int8(img_tensor)`：用 TensorRT 模型推理；
-  - 每次推理后调用 `torch.cuda.synchronize()`，是为了等待 GPU 真正执行完再计时。
-    - CUDA 操作默认是异步的；
-    - 如果不 `synchronize()`，CPU 可能只是把任务提交给 GPU 就继续往下走，计时会偏小。
-- `torch.softmax(y_fp32[0], dim=0) * 100` 把模型输出的 logits 转成每个类别的概率百分比。
-  - `torch.max(...)` 找出概率最大的类别；
-  - `classes = ['plane','car','bird','cat','deer','dog','frog','horse', 'ship','truck']` 是 CIFAR-10 的 10 个类别名。
-- 最后代码把两行结果画到 `test.jpg` 上：
-  - 第一行：PyTorch FP32 模型的推理耗时、预测类别、置信度；
-  - 第二行：TensorRT INT8 模型的推理耗时、预测类别、置信度；
-  - 然后 `img.save(test_image, 'jpeg')` 会把结果覆盖保存回 `test.jpg`。
+  - 文件名遵循 exp2 的保存格式 `weights.<epoch>.<accuracy>.pt`；
+  - checkpoint 必须包含 `net` 模型参数和 `acc` 准确率；
+  - 权重文件被根目录 `.gitignore` 中的 `*.pt` 忽略，不会提交到 Git；
+  - 找不到权重时，程序会在 TensorRT 转换前直接报告明确的 `FileNotFoundError`。
+- 推荐在项目根目录执行：
+  ```bash
+  ./exp3/run_exp.sh
+  ```
+  也可以进入 exp3 后执行 `./run_exp.sh`。
+- `run_exp.sh` 会：
+  - 根据脚本自身位置进入 exp3，因此相对路径不会受启动目录影响；
+  - 创建 `results_analysis/`；
+  - 把终端标准输出和错误同时显示并保存到 `results_analysis/run_exp3_out.txt`；
+  - 执行 `python3 int8_infer.py --gpu --model alexnet`。
+- `int8_infer.py` 把 exp2 放到 Python 模块搜索路径最前面，因此：
+  ```python
+  from models import model_factory
+  ```
+  明确导入 `exp2/models`。`model_factory("alexnet")` 创建 AlexNet 结构，随后程序加载 `exp3/weights/alexnet/weights.130.83.050.pt` 中的训练参数并切换到 `eval()` 模式。
+- `data.py` 准备两种数据：
+  - `testloader` 从 `exp1/data/` 读取完整 CIFAR-10 测试集，`batch_size=1`；
+  - `QDataset` 从 `exp3/data/q/*.jpg` 读取 INT8 校准图片；每个样本经过 Resize、ToTensor 和 Normalize 后变成 `[1, 3, 32, 32]` CUDA 张量，并按 torch2trt 要求返回 `[input_tensor]`，不返回 label。
+- `int8_infer.py` 使用与 exp2 一致的预处理：
+  - Resize 到 `32×32`；
+  - ToTensor；
+  - 使用 CIFAR-10 的 RGB 均值和标准差 Normalize。
+- TensorRT INT8 engine 通过下面的配置构建：
+  ```python
+  model_trt_int8 = torch2trt(
+      model,
+      [x],
+      fp16_mode=False,
+      int8_mode=True,
+      max_batch_size=1,
+      int8_calib_dataset=cali_cifar10,
+      int8_calib_algorithm=tensorrt.CalibrationAlgoType.ENTROPY_CALIBRATION_2,
+  )
+  ```
+  - `fp16_mode=False`：不主动启用 FP16；
+  - `int8_mode=True`：为支持的层启用 INT8；
+  - `int8_calib_dataset`：使用代表性图片校准 activation values；
+  - `ENTROPY_CALIBRATION_2`：使用熵校准算法选择 INT8 动态范围。
+- 单图测试读取干净的 `test.jpeg`，FP32 和 INT8 使用同一个已经放到 GPU 的 `img_tensor`：
+  - 两种模型各预热 50 次，预热不计入结果；
+  - 两种模型各正式推理 100 次；
+  - 使用 `time.perf_counter()` 计时，并在计时前后正确同步 CUDA；
+  - 总时间除以 100，得到平均单次 latency；
+  - 最后一次输出用于计算 softmax、预测类别和 confidence。
+- 程序把两种模型的平均 latency、prediction 和 confidence 写到 `test_result.jpg`，不会覆盖干净输入 `test.jpeg`。
+- 最后，程序让 FP32 和 INT8 分别遍历完整 CIFAR-10 测试集，输出 accuracy 和端到端总耗时。该总耗时包含 DataLoader、预处理、CPU 到 GPU 数据复制、Python 循环和模型推理。
 
-
-把这些步骤压缩成一句话就是：`int8_infer.py` 读取参数，创建模型结构，加载 `weights/` 里的训练权重，使用 `torch2trt` 把 PyTorch 模型转换成 TensorRT 模型，再用同一张 `test.jpg` 分别跑 PyTorch 推理和 TensorRT 推理，比较推理时间和预测类别。
+把流程压缩成一句话就是：`run_exp.sh` 保存完整日志，`data.py` 提供测试集和校准集，`int8_infer.py` 从 exp2 创建 AlexNet、加载 exp3 中的训练权重、构建 INT8 engine，再比较 FP32 和 INT8 的单图平均 latency、预测结果与完整测试集 accuracy。
 
 
 ### 其它文件/文件夹在实验里的作用
-- `int8_infer.py`：主推理脚本，负责加载模型、转换 TensorRT、计时、预测、把结果画到图片上。
-- `dataset.py`：数据集准备脚本。
-  - `testloader` 用 CIFAR-10 测试集做模型准确率测试；
-  - `QDataset` 从 `data/q/*.jpg` 读取图片，原本用于 INT8 校准数据。
-- `data/q/`：量化校准图片。文件名里带类别数字，`QDataset.__getitem__()` 会从文件名中解析标签。
-- `test.jpg`：单张推理测试图片。程序运行后会把 FP32 / INT8 的预测结果和耗时写到这张图片上。
-- `weights/alexnet.pt`：已经训练好的 AlexNet 权重文件。没有这个权重文件，`int8_infer.py` 只能创建模型结构，不能得到训练后的模型参数。
 
-## 推理结果
-terminal 输出一般会包含类似：
+- `run_exp.sh`：一键运行入口，并保存完整终端日志。
+- `int8_infer.py`：模型加载、INT8 校准与转换、单图测试、结果图片和完整测试集评估。
+- `data.py`：读取 `exp1/data/` 中的 CIFAR-10 测试集，并定义 `data/q/` 校准集。
+- `data/q/`：INT8 calibration images，不用于训练模型。
+- `weights/.gitkeep`：让 Git 保留 weights 空目录；实际 `.pt` 权重被忽略。
+- `weights/alexnet/weights.130.83.050.pt`：本实验需要的 FP32 AlexNet checkpoint，需在运行机器上自行放入。
+- `test.jpeg`：干净单图输入，不会被程序覆盖。
+- `test_result.jpg`：运行后生成的单图标注结果。
+- `results_analysis/run_exp3_out.txt`：一键脚本保存的完整 terminal 输出。
+- `../exp2/models/`：AlexNet 模型结构来源。
+
+### INT8 量化和校准的原理补充
+
+INT8 PTQ 通常同时涉及 weights 和 activation values。设置 `int8_mode=True` 后，TensorRT builder 会读取训练好的 FP32 weights，为支持 INT8 的层计算权重量化 scale；权重数值本身已经确定，因此通常不需要用校准图片估计其范围。
+
+Activation values 会随输入图片变化，所以需要校准集。TensorRT 让 `data/q/` 图片经过网络，统计各层 activation values 的分布。`ENTROPY_CALIBRATION_2` 的过程可以概括为：
+
+1. 建立 activation values 的分布/直方图；
+2. 尝试不同截断阈值 $T$；
+3. 模拟截断与 INT8 量化后的分布；
+4. 计算量化前后分布的 KLD（Kullback-Leibler Divergence）；
+5. 选择 KLD 最小的 $T$，再由 $T$ 推导 INT8 scale。
+
+以常见的对称有符号 INT8 为例，可以近似理解为：
+
+$$scale=T/127, \qquad q=\operatorname{round}(x/scale)$$
+
+校准图片与正式图片必须使用相同预处理，否则校准阶段观察到的 activation 分布可能不适合正式输入。还要注意，没有 INT8 实现的算子可能回退到其它精度，因此启用 INT8 不代表 engine 中每个算子一定执行 INT8。
+
+## 结果 和 分析
+
+一键运行后会生成：
 
 ```text
-Testing model: alexnet
-Time Spent for fp32: ...ms
-Time Spent for int8: ...ms
-Mode: fp32, ...ms <class> (...%)
-Mode: int8, ...ms <class> (...%)
+exp3/
+├── test_result.jpg
+└── results_analysis/
+    └── run_exp3_out.txt
 ```
 
-同时，`test.jpg` 会被覆盖保存，上面会写出 FP32 和 INT8 两种模式的预测类别、置信度和推理耗时。
+终端和日志会包含：
 
-## Questions
-`int8_infer.py`
-??? 现在 `torch2trt()` 里虽然写了 `int8_mode=True`，但校准数据集参数被注释掉了；后续需要确认这是否是真正完整的 INT8 量化流程。
+- FP32 的 100 次平均单图 latency；
+- TensorRT INT8 的 100 次平均单图 latency；
+- 两种模型对 `test.jpeg` 的 prediction 和 confidence；
+- 两种模型在完整 CIFAR-10 测试集上的 accuracy；
+- 两种模型遍历完整测试集的端到端总耗时。
 
-`dataset.py`
-??? `root='/opt/DATASET/CIFAR/'` 是老师机器上的数据集路径。如果自己的电脑没有这个目录，需要改成自己的 CIFAR-10 路径，或者改成 `root='./data'` 让代码下载/读取当前实验目录下的数据。
+单图平均 latency 主要测已经位于 GPU 上的同一个张量重复执行模型的时间。完整测试集总耗时还包含数据读取、预处理和数据传输，因此这两种指标不能交叉比较。正确的比较方式是：FP32 单图平均 latency 对比 INT8 单图平均 latency；FP32 完整测试集总时间对比 INT8 完整测试集总时间；FP32 accuracy 对比 INT8 accuracy。

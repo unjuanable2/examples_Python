@@ -1,6 +1,19 @@
 .DS_Store
 __pycache__/
 *.pyc
+*.pt
+
+# Local/private training documents
+实习生沟通技巧详解.pdf
+岗前培训课程-计算机汇总.xlsx
+中国科学院计算技术研究所所级vpn使用管理办法 3.pdf
+第一讲.pdf
+第二讲.pdf
+第三讲.pdf
+第四讲.pdf
+第五讲.pdf
+第六讲-2h.pdf
+学习内容.png
 
 ########################## exp1 ##########################
 
@@ -20,16 +33,3 @@ exp1/data/*
 # .gitkeep 文件的作用：一个空的占位文件，用于确保 Git 能够跟踪空目录。
 exp1/weights/*
 !exp1/weights/.gitkeep
-*.pt
-
-# Local/private training documents
-实习生沟通技巧详解.pdf
-岗前培训课程-计算机汇总.xlsx
-中国科学院计算技术研究所所级vpn使用管理办法 3.pdf
-第一讲.pdf
-第二讲.pdf
-第三讲.pdf
-第四讲.pdf
-第五讲.pdf
-第六讲-2h.pdf
-学习内容.png
