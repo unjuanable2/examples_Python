@@ -3,6 +3,13 @@
 完整研究流程通常是基础训练 → 稀疏训练 → 剪枝 → 微调。本作业老师已经提供
 稀疏模型，并明确要求剪枝后直接用 detect.py，不做微调，因此 ``run_exp.sh``
 不会调用本文件。保留 train.py 是为了说明 sparse .pt 的来源，而不是要求重跑。
+
+本文件中的“稀疏训练”仍使用完整 ``yolov3.cfg``，不会删除任何物理通道。启用
+``--sparsity-regularization`` 后，每个 batch 先计算正常检测损失并反向传播，再由
+``BNOptimizer.updateBN()`` 给可剪枝 BatchNorm 的 gamma 梯度加入 L1 项。优化器因此
+一边学习检测任务，一边把不重要通道的 gamma 推向 0。训练保存的 ``best.pt`` 或
+``last.pt`` 仍是完整网络 checkpoint；后续 ``shortcut_prune.py`` 才根据 gamma 大小
+生成 mask、缩短各卷积层 filters，并保存真正变窄的 cfg/weights。
 """
 
 import argparse
@@ -58,6 +65,13 @@ if f:
 
 
 def train():
+    """执行一次完整的普通训练或 BN gamma 稀疏训练。
+
+    与本实验剪枝最相关的顺序是：读取配置 → 创建完整 YOLOv3 → 加载初始权重 →
+    找出可稀疏化 BN 层 → 前向/反向传播检测损失 → 给 gamma 梯度加入 L1 项 →
+    更新参数 → 验证并保存完整稀疏 checkpoint。物理删除通道不在本文件发生。
+    """
+    # 1. 固定本次训练的结构、数据、尺寸、轮数、batch 和初始权重。
     cfg = opt.cfg
     t_cfg = opt.t_cfg  #teacher model cfg for knowledge distillation
     data = opt.data
@@ -82,7 +96,7 @@ def train():
         img_size = img_sz_max * 32  # initiate with maximum multi_scale size
         print('Using multi-scale %g - %g' % (img_sz_min * 32, img_size))
 
-    # Configure run
+    # 2. 解析 coco.data：train 字段提供训练图片列表，classes 决定检测类别数。
     data_dict = parse_data_cfg(data)
     train_path = data_dict['train']
     nc = int(data_dict['classes'])  # number of classes
@@ -91,12 +105,12 @@ def train():
     for f in glob.glob('*_batch*.jpg') + glob.glob(results_file):
         os.remove(f)
 
-    # Initialize model
+    # 3. 根据 cfg 创建未剪枝的完整模型；稀疏训练期间 filters/通道数保持不变。
     model = Darknet(cfg, (img_size, img_size), arc=opt.arc).to(device)
     if t_cfg:
         t_model = Darknet(t_cfg, (img_size, img_size), arc=opt.arc).to(device)
 
-    # Optimizer
+    # 4. 建立优化器。卷积权重单独加入 weight decay，其它参数放在基础参数组。
     pg0, pg1 = [], []  # optimizer parameter groups
     for k, v in dict(model.named_parameters()).items():
         if 'Conv2d.weight' in k:
@@ -115,6 +129,7 @@ def train():
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
     best_fitness = 0.
+    # 5. 加载训练起点：.pt 可恢复模型/优化器/epoch，Darknet .weights 只加载参数。
     attempt_download(weights)
     if weights.endswith('.pt'):  # pytorch format
         # possible weights are 'last.pt', 'yolov3-spp.pt', 'yolov3-tiny.pt' etc.
@@ -165,6 +180,8 @@ def train():
         print('teacher model:', t_weights, '\n')
 
 
+    # 6. 确定可稀疏化 BN 层。prune=1 会处理 shortcut 通道对应关系，保证残差
+    # 相加两侧在后续结构化剪枝时使用兼容的通道 mask。
     if opt.prune==1:
         CBL_idx, _, prune_idx, shortcut_idx, _=parse_module_defs2(model.module_defs)
         if opt.sr:
@@ -241,7 +258,7 @@ def train():
     # plt.tight_layout()
     # plt.savefig('LR.png', dpi=300)
 
-    # Mixed precision training https://github.com/NVIDIA/apex
+    # 7. 可选 Apex 混合精度；它只改变数值精度和性能，不改变稀疏训练原理。
     if mixed_precision:
         if t_cfg:
             [model, t_model], optimizer = amp.initialize([model, t_model], optimizer, opt_level='O1', verbosity=1)
@@ -257,7 +274,7 @@ def train():
         model.module_list = model.module.module_list
         model.yolo_layers = model.module.yolo_layers  # move yolo layer indices to top level
 
-    # Dataset
+    # 8. 从 coco.data 的 train 列表建立训练集，并启用目标检测数据增强。
     dataset = LoadImagesAndLabels(train_path,
                                   img_size,
                                   batch_size,
@@ -268,7 +285,7 @@ def train():
                                   cache_labels=True if epochs > 10 else False,
                                   cache_images=False if opt.prebias else opt.cache_images)
 
-    # Dataloader
+    # 9. DataLoader 将图片和标签组成 batch；accumulate 控制参数更新间隔。
     dataloader = torch.utils.data.DataLoader(dataset,
                                              batch_size=batch_size,
                                              num_workers=min([os.cpu_count(), batch_size, 16]),
@@ -276,11 +293,12 @@ def train():
                                              pin_memory=True,
                                              collate_fn=dataset.collate_fn)
 
+    # 10. 训练前记录各可剪枝层 gamma 分布，供 TensorBoard 前后对比。
     for idx in prune_idx:
         bn_weights = gather_bn_weights(model.module_list, [idx])
         tb_writer.add_histogram('before_train_perlayer_bn_weights/hist', bn_weights.numpy(), idx, bins='doane')
 
-    # Start training
+    # 11. 开始 epoch/batch 训练循环。
     model.nc = nc  # attach number of classes to model
     model.arc = opt.arc  # attach yolo architecture
     model.hyp = hyp  # attach hyperparameters to model
@@ -312,6 +330,7 @@ def train():
         mloss = torch.zeros(4).to(device)  # mean losses
         msoft_target = torch.zeros(1).to(device)
         pbar = tqdm(enumerate(dataloader), total=nb)  # progress bar
+        # -sr/--sparsity-regularization 开启时，当前实现从第一个 epoch 开始生效。
         sr_flag = get_sr_flag(epoch, opt.sr)
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             ni = i + nb * epoch  # number integrated batches (since train start)
@@ -352,10 +371,10 @@ def train():
             #         x['lr'] = hyp['lr0'] * g
             #         x['weight_decay'] = hyp['weight_decay'] * g
 
-            # Run model
+            # 11.1 完整模型前向传播，产生三个检测尺度上的预测。
             pred = model(imgs)
 
-            # Compute loss
+            # 11.2 计算正常 YOLO 检测损失：框回归、objectness 和分类。
             loss, loss_items = compute_loss(pred, targets, model)
             if not torch.isfinite(loss):
                 print('WARNING: non-finite loss, ending training ', loss_items)
@@ -377,7 +396,7 @@ def train():
             # Scale loss by nominal batch_size of 64
             loss *= batch_size / 64
 
-            # Compute gradient
+            # 11.3 先对检测损失反向传播，得到模型参数的正常任务梯度。
             if mixed_precision:
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
@@ -388,9 +407,11 @@ def train():
             # if opt.sr and opt.prune==1 and epoch > opt.epochs * 0.5:
             #     idx2mask = get_mask2(model, prune_idx, 0.85)
 
+            # 11.4 稀疏训练关键步骤：在 backward() 后给可剪枝 BN 的 gamma 梯度
+            # 加 s*sign(gamma)，等价于加入 L1 正则。训练后半程 s 降为原来的 1%。
             BNOptimizer.updateBN(sr_flag, model.module_list, opt.s, prune_idx, epoch, idx2mask, opt)
 
-            # Accumulate gradient for x batches before optimizing
+            # 11.5 optimizer 同时应用检测任务梯度和 gamma 稀疏梯度。
             if ni % accumulate == 0:
                 optimizer.step()
                 optimizer.zero_grad()
@@ -409,7 +430,7 @@ def train():
         # scheduler.step()
 
 
-        # Process epoch results
+        # 12. epoch 结束后在 valid 数据上评估；这里只前向传播，不更新参数。
         final_epoch = epoch + 1 == epochs
         if opt.prebias:
             print_model_biases(model)
@@ -444,7 +465,7 @@ def train():
         if fitness > best_fitness:
             best_fitness = fitness
 
-        # Save training results
+        # 13. 保存完整网络 checkpoint；此时仍配套 yolov3.cfg，并未物理删除通道。
         save = (not opt.nosave) or (final_epoch and not opt.evolve) or opt.prebias
         if save:
             with open(results_file, 'r') as f:
@@ -456,12 +477,12 @@ def train():
                              model) is nn.parallel.DistributedDataParallel else model.state_dict(),
                          'optimizer': None if final_epoch else optimizer.state_dict()}
 
-            # Save last checkpoint
+            # last.pt 始终保存最近 epoch，shortcut_prune.py 可读取其中的 ['model']。
             torch.save(chkpt, last)
             if opt.bucket and not opt.prebias:
                 os.system('gsutil cp %s gs://%s' % (last, opt.bucket))  # upload to bucket
 
-            # Save best checkpoint
+            # best.pt 保存验证 mAP 最好的完整稀疏模型，通常更适合作为剪枝输入。
             if best_fitness == fitness:
                 torch.save(chkpt, best)
 
@@ -475,6 +496,7 @@ def train():
 
         # end epoch ----------------------------------------------------------------------------------------------------
 
+    # 14. 再次记录 gamma 分布；大量 gamma 聚集到 0 附近说明稀疏化已生效。
     for idx in prune_idx:
         bn_weights = gather_bn_weights(model.module_list, [idx])
         tb_writer.add_histogram('after_train_perlayer_bn_weights/hist', bn_weights.numpy(), idx, bins='doane')
@@ -526,10 +548,14 @@ if __name__ == '__main__':
     parser.add_argument('--device', default='', help='device id (i.e. 0 or 0,1) or cpu')
     parser.add_argument('--adam', action='store_true', help='use adam optimizer')
     parser.add_argument('--var', type=float, help='debug variable')
+    # 开启后，训练循环会给可剪枝 BN gamma 加 L1 稀疏梯度；未指定时为普通训练。
     parser.add_argument('--sparsity-regularization', '-sr', dest='sr', action='store_true',
                         help='train with channel sparsity regularization')
+    # L1 稀疏强度：过大会损伤检测精度，过小则 gamma 不容易靠近 0。
     parser.add_argument('--s', type=float, default=0.001, help='scale sparse rate')
-    parser.add_argument('--prune', type=int, default=1, help='0:nomal prune 1:other prune ')
+    # 本实验保持默认 1，使用考虑 shortcut 对应关系的 parse_module_defs2()。
+    parser.add_argument('--prune', type=int, default=1,
+                        help='0: normal pruning; 1: shortcut-aware pruning')
     
     
     opt = parser.parse_args()

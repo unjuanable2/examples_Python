@@ -23,13 +23,13 @@ import argparse
 
 
 
-if __name__ == '__main__': #python shortcut_prune.py --percent 0.6
+if __name__ == '__main__':  # python shortcut_prune.py --percent 0.5
     # argparse 将 run_exp.sh 传入的文本参数转换为 Python 对象 opt。
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
     parser.add_argument('--data', type=str, default='data/coco.data', help='*.data file path')
     parser.add_argument('--weights', type=str, default='weights/sparse-yolov3-full-mAP48.1.pt', help='sparse model weights')
-    parser.add_argument('--percent', type=float, default=0.6, help='channel prune percent')
+    parser.add_argument('--percent', type=float, default=0.5, help='channel prune percent')
     parser.add_argument('--img_size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--batch-size', type=int, default=16,
                         help='COCO validation batch size; reduce it when GPU memory is insufficient')
@@ -71,8 +71,8 @@ if __name__ == '__main__': #python shortcut_prune.py --percent 0.6
         model_copy = deepcopy(model) 
         # percent=0.5 表示取全局排序中第 50% 个 gamma 作为阈值，不代表最终参数量
         # 或权重文件大小一定恰好下降 50%。shortcut 约束也会影响实际保留通道数。
-        thre_index = int(len(sorted_bn)*percent) #排序以後，第60%的index（編號）
-        thre1 = sorted_bn[thre_index] #找到gamma的門限值，第60%個gamma
+        thre_index = int(len(sorted_bn)*percent)  # 排序后取指定比例位置的下标
+        thre1 = sorted_bn[thre_index]  # 取得对应的全局 gamma 阈值
         print(f'Channels with Gamma value less than {thre1:.10f} are pruned!')
 
         total, remain_num = 0, 0

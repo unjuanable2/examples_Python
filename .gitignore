@@ -45,6 +45,5 @@ exp4/weights/*.weights
 exp4/weights/*.pt
 
 # detect.py 每次运行生成的视频、测试日志以及 COCO JSON 评测中间结果。
-exp4/output*/
 exp4/results_analysis/
 exp4/results.json
