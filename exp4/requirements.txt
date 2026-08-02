@@ -1,0 +1,12 @@
+# 这份实验代码来自较旧的 PyTorch YOLOv3 实现。
+# numpy 1.24 删除了 np.int 等旧别名，因此锁定到 1.23.x 可减少兼容问题。
+numpy==1.23.5
+opencv-python>=4.5,<5
+matplotlib>=3.5,<4
+tqdm>=4.60
+terminaltables>=3.1
+Pillow>=9,<12
+pycocotools>=2.0.6
+
+# torch/torchvision 与 CUDA 的组合取决于 GPU 设备驱动，建议按
+# https://pytorch.org/get-started/locally/ 给出的命令单独安装，故不在这里锁版本。

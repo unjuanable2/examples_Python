@@ -33,3 +33,18 @@ exp1/data/*
 # .gitkeep 文件的作用：一个空的占位文件，用于确保 Git 能够跟踪空目录。
 exp1/weights/*
 !exp1/weights/.gitkeep
+
+########################## exp4 ##########################
+
+# COCO 2014 验证图片、YOLO 标签和机器相关的绝对路径列表体积大或不可跨机器复用。
+# Git 只同步下载脚本和代码；每台 GPU 设备在本机执行 exp4/run_exp.sh download。
+exp4/data/coco/
+
+# 老师提供及剪枝生成的模型权重很大，不应直接提交到普通 GitHub 仓库。
+exp4/weights/*.weights
+exp4/weights/*.pt
+
+# detect.py 每次运行生成的视频、测试日志以及 COCO JSON 评测中间结果。
+exp4/output*/
+exp4/results_analysis/
+exp4/results.json

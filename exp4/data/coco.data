@@ -1,0 +1,14 @@
+# COCO 一共有 80 个可检测类别。
+classes=80
+
+# 本作业不重新训练，train 暂时也指向验证列表，避免保留老师机器的绝对路径。
+# 真正执行 train.py 时，才需要下载 train2014 并改为 trainvalno5k.txt。
+train=data/coco/5k.txt
+
+# test.py 和 shortcut_prune.py 会读取这个文件，逐张加载 COCO 2014 的 5k 验证图片。
+valid=data/coco/5k.txt
+
+# detect.py/test.py 用它把类别编号 0~79 转为 person、car 等类别名称。
+names=data/coco.names
+backup=backup/
+eval=coco
