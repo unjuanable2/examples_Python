@@ -627,7 +627,10 @@ def letterbox(img, new_shape=416, color=(128, 128, 128), mode='auto', interp=cv2
     if isinstance(new_shape, int):
         r = float(new_shape) / max(shape)  # ratio  = new / old
     else:
-        r = max(new_shape) / max(shape)
+        # new_shape 为 [height, width]。矩形 batch 必须同时满足高度和宽度限制，
+        # 因此取两个方向缩放率中较小的一个；旧写法只比较最长边，在图片实际
+        # 宽高比与 .shapes 记录略有差异时可能把另一边缩得过大，产生负 padding。
+        r = min(float(new_shape[0]) / shape[0], float(new_shape[1]) / shape[1])
     ratio = r, r  # width, height ratios
     new_unpad = (int(round(shape[1] * r)), int(round(shape[0] * r)))
 

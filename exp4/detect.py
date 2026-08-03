@@ -1,7 +1,4 @@
-"""使用 YOLOv3 对图片或视频做目标检测。 
-
-3. load_darknet_weights() 把 .weights 参数加载到对应网络；
-4. LoadImages 逐帧读取图片/视频并执行 letterbox、BGR→RGB 和 0~1 归一化；
+"""使用 YOLOv3 对图片或视频做目标检测。  
 5. model(img) 前向传播，non_max_suppression() 删除重复检测框；
 6. scale_coords() 将 416×416 输入坐标映射回原视频，plot_one_box() 画框；
 7. OpenCV VideoWriter 保存带检测框、模型名称和当前 FPS 的结果视频。

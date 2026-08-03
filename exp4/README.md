@@ -40,7 +40,11 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
-先按照 [PyTorch 官方安装选择器](https://pytorch.org/get-started/locally/) 安装与 GPU 驱动匹配的 CUDA PyTorch，再安装项目其它依赖 `python -m pip install -r requirements.txt`
+先按照 [PyTorch 官方安装选择器](https://pytorch.org/get-started/locally/) 安装与 GPU 驱动匹配的 CUDA PyTorch，再安装项目其它依赖：
+```bash
+python -m pip install -r requirements.txt
+```
+
 
 检查环境：
 ```bash
@@ -130,10 +134,11 @@ python -c "import torch, cv2; print('torch:', torch.__version__); print('opencv:
     - `2>&1` 把报错信息和普通输出合并；
     - `tee` 让逐帧 FPS 既显示在 terminal，也保存到日志；
     - `PIPESTATUS[0]` 取得 `python detect.py` 本身的退出状态，避免 Python 失败但 `tee` 成功时误判实验成功。
-- `detect.py` 收到原模型参数后开始处理视频：
-  - `opt = parser.parse_args()` 真正读取 `run_exp.sh` 传入的参数，得到 `opt.cfg`、`opt.weights`、视频 `opt.source`、阈值、设备 等属性；
-    - 文件末尾的 `argparse.ArgumentParser()` 定义程序支持的所有 `--参数`
-  - 接下来的都是 `with torch.no_grad()` 关闭梯度记录。目标检测只做前向传播，不需要反向传播，可节省显存和计算；
+- `detect.py` (main 入口) 收到原模型参数后开始处理视频：
+  - (main 入口) `argparse.ArgumentParser()` 定义程序支持的所有 `--参数`
+    - `opt = parser.parse_args()` 真正读取 `run_exp.sh` 传入的参数，得到 `opt.cfg`、`opt.weights`、视频 `opt.source`、阈值、设备 等属性；
+    - 开启 `with torch.no_grad()` 关闭梯度记录。目标检测只做前向传播，不需要反向传播，可节省显存和计算；
+    - 调用 `detect()`
   - `detect()` 首先调用 `torch_utils.select_device(opt.device)`：
     - `--device 0` 返回 `torch.device('cuda:0')`；
     - `--device cpu` 返回 CPU；
@@ -147,9 +152,8 @@ python -c "import torch, cv2; print('torch:', torch.__version__); print('opencv:
     - `.pt` 表示 PyTorch checkpoint，`torch.load(..., map_location=device)['model']` 取出其中的模型参数字典，再由 `model.load_state_dict()` 复制进网络；
     - `.weights` 表示 Darknet 二进制权重，`load_darknet_weights()` 按 cfg 层顺序依次读取并复制 BN bias、BN weight、running mean、running variance、卷积 bias 和卷积 weight；
       - 本阶段使用 `yolov3-full-mAP53.3.weights`，因此实际进入 `.weights` 分支；
-  - `model.to(device).eval()` 连续完成两件事：
-    - `.to(device)` 把模型参数移到 `select_device()` 返回的设备，本阶段默认是 `cuda:0`；
-    - `.eval()` 切换到推理模式，使 BatchNorm 使用训练时保存的 running mean/variance，而不再根据当前视频帧更新统计量；
+  - `model.to(device)` 把模型参数移到 `select_device()` 返回的设备，本阶段默认是 `cuda:0`
+    - 紧接着 `.eval()` 切换到推理模式，使 BatchNorm 使用训练时保存的 running mean/variance，而不再根据当前视频帧更新统计量；
   - 因为 `source=data/samples/c_test.mp4` 是本地视频，不是摄像头或网络流，所以代码设置 `save_img=True`，并调用 `dataset = LoadImages(source, img_size=416, half=False)` (utils/datasets.py)：
     - `LoadImages.__init__()` 判断输入扩展名属于视频格式，把路径加入 `videos`，再由 `new_video()` 调用 `cv2.VideoCapture(path)` 打开视频并读取总帧数；
     - `for path, img, im0s, vid_cap in dataset` 每次迭代触发 `LoadImages.__next__()`:
@@ -316,7 +320,31 @@ python -c "import torch, cv2; print('torch:', torch.__version__); print('opencv:
  
 
 ## 其它文件/文件夹在实验里的作用
-- `requirements.txt`：记录除 PyTorch 外的 Python 依赖。
+- `requirements.txt`：记录除 PyTorch 外的 Python 依赖。其中列出的名称是通过 `pip` 安装的软件包名，它不一定等于代码里的 `import` 名称。各依赖在本实验中的用途如下。
+  - `numpy==1.23.5`
+    - 出现在 `shortcut_prune.py`、`utils/prune_utils.py`、`utils/parse_config.py`、`utils/datasets.py` 和 `utils/utils.py` 中。
+    - 用于保存和计算数组、整理检测结果、统计 BN 层缩放因子、生成剪枝掩码，以及读取和写入 Darknet 权重文件中的数值。
+    - 这里固定为 `1.23.5`，是为了兼容这套较早的 YOLOv3 代码使用的 NumPy 接口，避免新版 NumPy 删除旧接口后报错。
+  - `opencv-python>=4.5,<5`
+    - 安装包名是 `opencv-python`，但 Python 中的模块名是 `cv2`，因此不会出现 `import opencv`。
+    - `cv2` 直接导入于 `utils/datasets.py` 和 `utils/utils.py`，负责读取图片和视频、缩放及填充图片、颜色空间转换、绘制检测框和文字，以及写出检测后的视频。
+    - `detect.py` 没有显式写 `import cv2`。它执行了 `from utils.datasets import *` 和 `from utils.utils import *`，这两条语句也把上述模块中已经导入的 `cv2` 名称带进了 `detect.py`，所以其中的 `cv2.VideoCapture`、`cv2.rectangle`、`cv2.VideoWriter` 等调用仍能运行。这是旧代码采用的隐式导入方式，并不表示 `detect.py` 没有使用 OpenCV。
+  - `matplotlib>=3.5,<4`：
+    - 主要出现在 `utils/utils.py` 中；`train.py` 也会通过 `from utils.utils import *` 使用其中的绘图对象和函数。
+    - 用于绘制训练曲线、类别分布、目标尺寸分布和检测结果等图表。`utils/utils.py` 使用无界面的 `Agg` 后端，因此服务器没有桌面环境时也能把图保存成文件。
+  - `tqdm>=4.60`
+    - 出现在 `utils/datasets.py` 和 `utils/utils.py` 中，并会被 `train.py`、`test.py` 的通配符导入间接使用。
+    - 用于显示训练、验证、标签扫描和数据缓存过程的进度条；它只改善终端显示，不参与模型计算。
+  - `terminaltables>=3.1`
+    - 出现在 `shortcut_prune.py` 和 `utils/prune_utils.py` 中。
+    - 用于把 BN 层统计信息以及剪枝前后的参数量、计算量和精度对比整理成终端表格，不参与剪枝算法本身。
+  - `Pillow>=9,<12`
+    - 安装包名是 `Pillow`，代码中的导入名是 `PIL`。`utils/datasets.py` 使用了 `from PIL import Image, ExifTags`。
+    - 用于读取图片尺寸、检查图片是否损坏，以及根据 EXIF 方向信息修正宽高；生成和校验 `data/5k.shapes` 时会用到这些信息。
+  - `pycocotools>=2.0.6`
+    - `test.py` 在启用 `save_json=True` 的 COCO 官方评估流程时，才会导入 `pycocotools.coco.COCO` 和 `pycocotools.cocoeval.COCOeval`。
+    - 它根据 COCO 标注文件和模型导出的 JSON 检测结果计算官方 COCO AP/mAP。未启用 JSON 评估时，代码使用 `utils/utils.py` 中的 `ap_per_class` 计算指标。
+  - `torch` 和 `torchvision` 没有写进 `requirements.txt`，因为 PyTorch 安装包需要根据显卡驱动和 CUDA 版本单独选择。`torch` 是模型定义、GPU 张量计算、训练、测试和剪枝共同依赖的核心框架；当前实验代码没有直接导入 `torchvision`，但安装与 `torch` 版本匹配的 `torchvision` 可以保持 PyTorch 环境完整。
 - `run_exp.sh`：整个实验的入口，按所选阶段调用数据下载、原模型检测、模型剪枝、剪枝模型检测和视频合并流程。
 - `detect.py`：执行图片或视频推理，并绘制检测框、类别、模型名称和 FPS。
 - `shortcut_prune.py`：根据稀疏模型的 BN gamma 生成 50% 结构化通道剪枝模型。
