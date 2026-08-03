@@ -48,4 +48,6 @@ exp4/weights/*.pt
 # 便于记录原模型检测、50% 剪枝和剪枝模型检测的完整终端输出。
 exp4/results_analysis/*
 !exp4/results_analysis/*.log
+!exp4/results_analysis/analysis_exp4.py
+!exp4/results_analysis/analysis_exp4_log.txt
 exp4/results.json
