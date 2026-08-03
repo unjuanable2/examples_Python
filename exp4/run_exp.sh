@@ -94,6 +94,10 @@ COCO_DIR="data/coco"
 COCO_IMAGES_DIR="$COCO_DIR/images"
 COCO_VAL_DIR="$COCO_IMAGES_DIR/val2014"
 COCO_LIST="$COCO_DIR/5k.txt"
+# pjreddie.com 原来的 5k.part 链接已经失效。改用 Detectron 发布的 COCO 2014
+# minival 标注归档，并从其中 5000 个 image 记录生成同一标准验证集的路径列表。
+COCO_MINIVAL_ARCHIVE="$COCO_DIR/coco_annotations_minival.tgz"
+COCO_MINIVAL_JSON="$COCO_DIR/annotations/instances_minival2014.json"
 
 # 从此处开始，脚本当前工作目录固定为 exp4。后面的 Python 命令可以稳定使用
 # cfg/yolov3.cfg 这类相对路径，而不依赖用户启动脚本时所在的位置。
@@ -160,13 +164,17 @@ download_coco() {
     # 打印统一格式的阶段标题
     section "Stage 1/5: Download COCO 2014 validation data"
 
-    # 检查 wget 和 unzip 是否可用
+    # 检查下载、解压和生成 5k 列表所需命令是否可用。
     command -v wget >/dev/null 2>&1 || {
         echo "wget is required. On Ubuntu: sudo apt-get install wget unzip"
         exit 1
     }
     command -v unzip >/dev/null 2>&1 || {
         echo "unzip is required. On Ubuntu: sudo apt-get install unzip"
+        exit 1
+    }
+    command -v tar >/dev/null 2>&1 || {
+        echo "tar is required. On Ubuntu: sudo apt-get install tar"
         exit 1
     }
 
@@ -177,11 +185,14 @@ download_coco() {
     # 这个判断只代表目录存在；函数末尾还会用第一张图片做实际完整性检查。
     if [ ! -d "$COCO_VAL_DIR" ]; then
         wget -c -P "$COCO_IMAGES_DIR" \
-            http://images.cocodataset.org/zips/val2014.zip
+            http://images.cocodataset.org/zips/val2014.zip || {
+            echo "Failed to download COCO val2014 images. Re-run download to resume."
+            exit 1
+        }
         # wget -c 支持断点续传，已下载一部分时再次运行不会从零开始。
         # -P 指定下载目录，避免 wget 把 zip 文件散落在 exp4 根目录。
         
-        # val2014.zip 约 6 GB，包含 41k 张验证图片, 5k.part 从中选择本实验的 5000 张。
+        # val2014.zip 约 6 GB，包含约 41k 张验证图片；minival JSON 从中指定本实验的 5000 张。
     
         unzip -q "$COCO_IMAGES_DIR/val2014.zip" -d "$COCO_IMAGES_DIR"
         # unzip -q 解压 zip 文件；
@@ -193,11 +204,19 @@ download_coco() {
 
     # 这里即使文件已经存在也继续调用 wget -c；wget 会检查已有大小并续传/确认完成。
     wget -c -P "$COCO_DIR" \
-        https://pjreddie.com/media/files/coco/labels.tgz
+        https://pjreddie.com/media/files/coco/labels.tgz || {
+        echo "Failed to download YOLO-format COCO labels."
+        exit 1
+    }
         # labels.tgz 是已转换为 YOLO 文本格式的标注，每行是 class x_center y_center width height，
         # 后四项均相对于图像宽高归一化到 0~1。
-    wget -c -P "$COCO_DIR" \
-        https://pjreddie.com/media/files/coco/5k.part
+    # 原 https://pjreddie.com/media/files/coco/5k.part 目前返回 404。
+    # Detectron 的 minival 归档包含标准 COCO 2014 5k 子集的 image 元数据。
+    wget -c -O "$COCO_MINIVAL_ARCHIVE" \
+        https://dl.fbaipublicfiles.com/detectron/coco/coco_annotations_minival.tgz || {
+        echo "Failed to download COCO 2014 minival annotations."
+        exit 1
+    }
 
     # labels.tgz 使用 gzip 压缩的 tar 归档：
     # -x=解包，-z=先用 gzip 解压，-f=下一参数是归档文件，-C=解到指定目录。
@@ -207,15 +226,35 @@ download_coco() {
         echo "YOLO labels already exist: $COCO_DIR/labels/val2014"
     fi
 
-    # 5k.part 中的路径以 ./ 开头。把它替换为当前 GPU 设备上的绝对 COCO_DIR，避免从不同工作目录启动 Python 时找不到图片。
+    # 解出 instances_minival2014.json；它的 images 数组恰好记录标准 minival 的 5000 张图。
+    if [ ! -f "$COCO_MINIVAL_JSON" ]; then
+        tar -xzf "$COCO_MINIVAL_ARCHIVE" -C "$COCO_DIR"
+    else
+        echo "COCO minival annotations already exist: $COCO_MINIVAL_JSON"
+    fi
+    require_file "$COCO_MINIVAL_JSON" "COCO minival annotation extraction failed."
+
+    # 根据 minival JSON 的 file_name 生成当前机器上的绝对图片路径列表。
     local coco_abs
     # local 的意思是 coco_abs 只在 download_coco() 函数内有效，函数返回后不会覆盖脚本外面同名变量。
     coco_abs="$(cd "$COCO_DIR" && pwd)"
     # coco_abs 必须在 cd 到 COCO_DIR 的子 shell 中通过 pwd 得到绝对路径。
     # 括号里的 cd 不会改变主脚本当前目录；命令替换只取回 pwd 的输出。
-    sed "s#^\./#$coco_abs/#" "$COCO_DIR/5k.part" > "$COCO_LIST"
-    # sed 的 s#旧#新# 使用 # 作为分隔符，避免绝对路径中的 / 需要大量转义；
-    # ^\./ 只匹配每行开头的 "./"。> 会新建或覆盖本机的 5k.txt。
+    "$PYTHON_BIN" - "$COCO_MINIVAL_JSON" "$COCO_LIST" "$coco_abs" <<'PY'
+import json
+import os
+import sys
+
+annotation_path, output_path, coco_root = sys.argv[1:]
+with open(annotation_path, 'r') as file:
+    images = json.load(file)['images']
+
+image_dir = os.path.join(coco_root, 'images', 'val2014')
+with open(output_path, 'w') as file:
+    for image in images:
+        file.write(os.path.join(image_dir, image['file_name']) + '\n')
+PY
+    # 这个 Python 小段只读取 JSON 并写路径，不依赖 PyTorch 或 pycocotools。
     
 
     # 做三个快速完整性检查：列表应有 5000 行、第一张图存在、同名标签存在。
@@ -231,11 +270,11 @@ download_coco() {
     
     
     if [ "$line_count" -ne 5000 ]; then
-        # -ne 是整数“不等于”。5k.part 正常应恰好列出 5000 张图片。
+        # -ne 是整数“不等于”。minival JSON 正常应恰好列出 5000 张图片。
         echo "Unexpected image count in $COCO_LIST: $line_count (expected 5000)"
         exit 1
     fi
-    require_file "$first_image" "COCO image extraction or 5k.part path generation is incorrect."
+    require_file "$first_image" "COCO image extraction or minival path generation is incorrect."
     require_file "$first_label" "YOLO labels were not extracted into labels/val2014."
 
     echo "COCO validation data is ready."

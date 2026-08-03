@@ -82,7 +82,7 @@ python -c "import torch, cv2; print('torch:', torch.__version__); print('opencv:
 - 通过 `command -v wget` 和 `command -v unzip` 检查下载及解压工具；缺少工具时立即退出，而不是下载到一半才失败；
 - `mkdir -p data/coco/images` 创建数据目录；
   - `-p` 表示目录已经存在时不报错；
-- 下载并解压 COCO 2014 validation 压缩包：约 6 GB、含约 41k 张图片（本实验只通过 `5k.part` 从中选 5000 张验证图片）
+- 下载并解压 COCO 2014 validation 压缩包：约 6 GB、含约 41k 张图片（本实验使用 minival JSON 从中指定 5000 张验证图片）
   - `wget -c` 下载 `val2014.zip` 到 `data/coco/images/val2014.zip`：
     - `-c` 表示断点续传，网络中断后重新运行 `download` 可以继续；
     - 不下载约 13 GB 的 `train2014`，因为老师已经提供稀疏模型，本实验不训练也不微调；
@@ -96,7 +96,8 @@ python -c "import torch, cv2; print('torch:', torch.__version__); print('opencv:
   - 标签每行是 `class_id x_center y_center width height`；
     - `class_id` 是 COCO 80 类中的类别编号；
     - 坐标和宽高相对于图片尺寸归一化到 `[0,1]`；
-- 下载 `5k.part` 后，`sed` 把其中以 `./` 开头的相对路径转换成当前 GPU 设备的绝对路径，生成 `data/coco/5k.txt`；
+- 原来的 `5k.part` 下载地址现已失效，因此脚本改为下载 Detectron 发布的 `coco_annotations_minival.tgz`（约 74 MB），解出 `instances_minival2014.json`；其中的 `images` 数组记录标准 COCO 2014 minival 的 5000 张图片；
+- 脚本使用 Python 标准库读取每条图片记录的 `file_name`，与当前机器上的 `data/coco/images/val2014/` 绝对目录拼接，生成 `data/coco/5k.txt`；
   - 使用绝对路径可以让 `test.py` 无论从哪个工作目录启动都找到图片；
   - 绝对路径和机器目录有关，所以 `5k.txt` 在 GPU 设备重新生成；
 - 最后检查 `5k.txt` 是否恰好 5000 行、第一张图片是否存在、同名标签是否存在。只有三个检查都通过，download 阶段才算成功。
@@ -176,7 +177,7 @@ python -c "import torch, cv2; print('torch:', torch.__version__); print('opencv:
     
     - `torch.from_numpy(img).to(device)` 把 `[3,416,416]` numpy 数组转换成 tensor 并复制到 GPU；
       - 当 `img.ndimension() == 3` 时，`unsqueeze(0)` 在最前面加入 batch 维，得到 `[1,3,416,416]`；
-      - `pred, _ = model(img)` 执行前向传播，合并三个 YOLO 检测尺度产生的候选框；这里的候选框还没有经过置信度过滤和去重；
+      - `pred, _ = model(img)` 执行前向传播，合并三个 YOLO 检测尺度产生的候选框。这里的候选框还没有经过置信度过滤和去重；
     - `non_max_suppression(pred, 0.3, 0.5)` 先过滤 object confidence 低于 `0.3`、宽高过小或包含非有限数值的候选框，再按类别处理重叠框；当前代码使用 `MERGE` 模式，对 IoU 大于 `0.5` 的同类别框按置信度加权合并；
     - 对 NMS 返回的每张图检测结果 `det`，本地视频分支令 `p=path`、`im0=im0s`，并用 `save_path = output_original/c_test.mp4` 确定输出路径；
     - `scale_coords(img.shape[2:], det[:, :4], im0.shape)` 把基于 416 输入的 `xyxy` 框坐标映射回原始视频分辨率，再调用 `.round()` 取整；
