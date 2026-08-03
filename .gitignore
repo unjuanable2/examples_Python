@@ -44,6 +44,8 @@ exp4/data/coco/
 exp4/weights/*.weights
 exp4/weights/*.pt
 
-# detect.py 每次运行生成的视频、测试日志以及 COCO JSON 评测中间结果。
-exp4/results_analysis/
+# detect.py 每次运行生成的视频及其它实验结果默认不提交；保留文本日志，
+# 便于记录原模型检测、50% 剪枝和剪枝模型检测的完整终端输出。
+exp4/results_analysis/*
+!exp4/results_analysis/*.log
 exp4/results.json
